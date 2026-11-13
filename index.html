@@ -58,12 +58,45 @@
   #settings label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
   .hint{font-size:12px;color:var(--sub);margin-top:6px;line-height:1.5}
   #dbg{font-size:11px;color:var(--sub);white-space:pre-wrap;word-break:break-all;margin-top:8px;max-height:30vh;overflow:auto}
+  .nn{display:none}
+  /* ===== 한 화면 모드 ===== */
+  body.compact .node{display:none}
+  body.compact .node.end{display:grid}
+  body.compact .nn{display:inline;font-weight:700;font-size:10px;color:var(--txt);margin-right:4px}
+  body.compact .seg .info{flex-direction:row;flex-wrap:wrap;align-items:baseline;align-content:flex-start;justify-content:flex-start;padding-top:1px}
+  body.compact .seg .info>span:not(.sp):not(.nn){width:100%}
+  body.compact{padding-bottom:4px}
+  body.compact header{padding-top:calc(4px + env(safe-area-inset-top));padding-bottom:4px}
+  body.compact h1{font-size:14px}
+  body.compact header button{padding:4px 8px;font-size:14px}
+  body.compact #eta{margin-top:2px;font-size:11px}
+  body.compact #eta b{font-size:16px}
+  body.compact #status{font-size:10px;padding:2px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  body.compact #status.err{white-space:nowrap}
+  body.compact #route{padding:0 4px}
+  body.compact .node,body.compact .seg{grid-template-columns:var(--lw,27%) 1fr;column-gap:4px}
+  body.compact .node .l{font-size:10px;padding:0;gap:4px;line-height:var(--nh,13px);white-space:nowrap;overflow:hidden}
+  body.compact .node .dot{width:9px;height:9px;border-width:2px}
+  body.compact .seg .l{min-height:var(--sh,14px);gap:4px}
+  body.compact .seg .rail{width:7px;margin-left:1px}
+  body.compact .seg .info{padding:0;gap:0;font-size:9px;line-height:1.15}
+  body.compact .seg .info .sp{font-size:12px}
+  body.compact .seg .info .sp small{font-size:8px}
+  body.compact .seg .info>span:not(.sp):not(.nn){display:var(--road,block)}
+  body.compact .seg .r{display:grid;grid-template-columns:repeat(var(--cols,3),1fr);gap:2px;padding:1px 0}
+  body.compact .none{display:none}
+  body.compact .tile{border-radius:4px;border-width:0}
+  body.compact .tile .cap{padding:6px 2px 0;font-size:8px;line-height:1.2}
+  body.compact .spd{font-size:8px;padding:0 2px;border-radius:3px}
+  body.compact .fl{top:1px;right:1px;padding:0 3px;font-size:9px;border-radius:4px}
+  body.compact .legend{display:none}
 </style>
 </head>
 <body>
 <header>
   <div class="row">
-    <h1>✈️ 이산포IC → 인천공항 T2</h1>
+    <h1>✈️ 이산포IC → T2</h1>
+    <button id="btnView" title="한 화면/목록 전환">▤</button>
     <button id="btnMode" title="영상/정지화면 전환">🎥</button>
     <button id="btnRefresh" title="새로고침">⟳</button>
     <button id="btnSet" title="설정">⚙︎</button>
@@ -264,6 +297,10 @@ const io=new IntersectionObserver(es=>{ es.forEach(e=>{ e.isIntersecting?visible
 let schedT=null;
 if(cfg.type==='3'){ cfg.type='4'; cfg.still=true; store.set('cfg',cfg); }
 const still=()=>!!cfg.still;
+if(cfg.compact===undefined){ cfg.compact=true; cfg.still=true; store.set('cfg',cfg); }
+const compact=()=>!!cfg.compact;
+// 한 화면 모드용 짧은 이름: [노선명] 제거, '(공항 12.5)' 같은 거리표 정리
+const lbl=c=>compact()?c.name.replace(/^\[[^\]]*\]\s*/,'').replace(/\s*\(공항\s*[\d.]+\)/,'').replace(/영업소/,'TG'):c.name;
 const STILL_MS=30000, SNAP_CONC=3; // 정지화면 갱신 주기, 동시 캡처 수
 const snapQ=[]; let snapActive=0;
 function requestSnap(el,t){ if(t.snapping) return; t.snapping=true; snapQ.push([el,t]); pump(); }
@@ -278,12 +315,12 @@ function snap(el,t){ return new Promise(res=>{
     if(ok && v.videoWidth){ let c=el.querySelector('canvas'); if(!c){ c=document.createElement('canvas'); el.prepend(c); }
       c.width=v.videoWidth; c.height=v.videoHeight; c.getContext('2d').drawImage(v,0,0,c.width,c.height);
       t.snapAt=Date.now(); t.fails=0; el.classList.remove('dead');
-      cap.textContent=`${t.cam.name} · ${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`; }
-    else { t.fails=(t.fails||0)+1; if(t.fails===1){ await freshUrls(); t.snapAt=0; } else { el.classList.add('dead'); cap.textContent='⚠️ 화면 없음 · '+t.cam.name; t.snapAt=Date.now(); } }
+      cap.textContent=`${lbl(t.cam)} · ${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`; }
+    else { t.fails=(t.fails||0)+1; if(t.fails===1){ await freshUrls(); t.snapAt=0; } else { el.classList.add('dead'); cap.textContent='⚠️ 화면 없음 · '+lbl(t.cam); t.snapAt=Date.now(); } }
     if(h) h.destroy(); v.pause(); v.removeAttribute('src'); v.load(); v.remove(); res(); };
   const to=setTimeout(()=>finish(false),10000);
   v.addEventListener('playing',()=>setTimeout(()=>finish(true),400),{once:true});
-  if(!el.querySelector('canvas')) cap.textContent='⏳ '+t.cam.name;
+  if(!el.querySelector('canvas')) cap.textContent='⏳ '+lbl(t.cam);
   h=attach(v,t.cam.url,()=>finish(false)); v.play().catch(()=>{});
 }); }
 setInterval(()=>{ if(!still()||document.hidden||$('player').classList.contains('show')) return;
@@ -311,7 +348,7 @@ function render(sp){
     list.forEach(c=>{
       const el=document.createElement('div'); el.className='tile'+(flips.has(c.name)?' flip':'');
       const v=linkSpeed[c.link];
-      el.innerHTML=`<div class="cap"><span class="n">${esc(c.name)}</span>${v>0?`<span class="spd" style="background:${colorOf(v)}">${v}</span>`:''}</div>`;
+      el.innerHTML=`<div class="cap"><span class="n">${esc(lbl(c))}</span>${v>0?`<span class="spd" style="background:${colorOf(v)}">${v}</span>`:''}</div>`;
       const fb=document.createElement('button'); fb.className='fl'; fb.textContent='⇄'; fb.title='좌우 반전';
       fb.onclick=e=>{e.stopPropagation(); toggleFlip(c.name); el.classList.toggle('flip',flips.has(c.name));};
       el.appendChild(fb);
@@ -320,8 +357,23 @@ function render(sp){
     });
     sg.appendChild(right); R.appendChild(sg);
   });
+  fit();
   updateSpeeds(sp);
 }
+function fit(){
+  document.body.classList.toggle('compact',compact());
+  $('btnView').textContent=compact()?'▤':'▦';
+  if(!compact()) return;
+  // 실제로 그려 보면서 화면 높이에 맞는 가장 큰 크기(열 수 최소)를 찾음
+  const R=$('route');
+  const fits=()=>R.getBoundingClientRect().bottom<=innerHeight-2;
+  const tries=[[27,1,'block'],[27,2,'block'],[24,2,'none'],[27,3,'block'],[24,3,'none'],[21,3,'none'],[24,4,'none'],[21,4,'none'],[21,5,'none'],[21,6,'none']];
+  const set=t=>{ R.style.setProperty('--lw',t[0]+'%'); R.style.setProperty('--cols',t[1]); R.style.setProperty('--road',t[2]); };
+  let pick=tries[tries.length-1];
+  for(const t of tries){ set(t); if(fits()){ pick=t; break; } }
+  set(pick);
+}
+addEventListener('resize',()=>{ clearTimeout(fit.t); fit.t=setTimeout(fit,200); });
 function updateSpeeds(sp){
   let mins=0, known=0;
   NODES.slice(0,-1).forEach((n,i)=>{
@@ -329,7 +381,7 @@ function updateSpeeds(sp){
     if(s.v>0){ mins+=len/s.v*60; known+=len; }
     const el=$('segL'+i); if(!el) return;
     el.innerHTML=`<div class="rail" style="background:${colorOf(s.v)}"></div>
-      <div class="info"><span class="sp" style="color:${colorOf(s.v)}">${s.v>0?s.v.toFixed(0):'—'}<small>${s.v>0?'km/h':''}</small></span>
+      <div class="info"><span class="nn">${esc(n[0])}</span><span class="sp" style="color:${colorOf(s.v)}">${s.v>0?s.v.toFixed(0):'—'}<small>${s.v>0?'km/h':''}</small></span>
       <span>${esc(n[3])} · ${len.toFixed(1)}km${s.why?`<br><span style="color:var(--n)">${s.why}</span>`:''}</span></div>`;
   });
   tiles.forEach((t,el)=>{ const v=linkSpeed[t.cam.link], cap=el.querySelector('.cap'); let b=cap.querySelector('.spd');
@@ -356,7 +408,7 @@ function startTile(el,t){
   t.hls=attach(v,t.cam.url,fail);
   v.play().catch(()=>{});
   t.timer=setTimeout(()=>{ if(t.media===v && !(v.readyState>=2)) fail(); },8000);
-  v.addEventListener('playing',()=>{ t.tries=0; el.querySelector('.cap .n').textContent=t.cam.name; },{once:true});
+  v.addEventListener('playing',()=>{ t.tries=0; el.querySelector('.cap .n').textContent=lbl(t.cam); },{once:true});
 }
 // 스트림 주소가 만료됐을 수 있으므로 목록을 새로 받아 다시 시도 (1분에 1번만 새로 받음)
 let urlRefreshAt=0, urlRefreshing=null;
@@ -374,8 +426,8 @@ async function retryTile(el,t){
   const cap=el.querySelector('.cap .n');
   t.tries=(t.tries||0)+1;
   const why=(t.media&&t.media.dataset&&t.media.dataset.err)||'응답 없음';
-  if(t.tries>2){ stopTile(t); cap.textContent=`⚠️ ${why} · `+t.cam.name; el.classList.add('dead'); return; }
-  cap.textContent='⏳ 다시 연결 중 · '+t.cam.name;
+  if(t.tries>2){ stopTile(t); cap.textContent=`⚠️ ${why} · `+lbl(t.cam); el.classList.add('dead'); return; }
+  cap.textContent='⏳ 다시 연결 중 · '+lbl(t.cam);
   stopTile(t); await freshUrls(); await sleep(400);
   if(visible.has(el)) startTile(el,t);
 }
@@ -430,6 +482,8 @@ $('btnMode').onclick=()=>{
   status(still()?`정지화면 · ${STILL_MS/1000}초마다 자동 갱신 · 누르면 실시간 영상`:`실시간 영상 · 동시 재생 ${MAX_PLAY}개`);
 };
 modeIcon();
+$('btnView').onclick=()=>{ cfg.compact=!compact(); if(compact()&&!still()){ cfg.still=true; modeIcon(); } store.set('cfg',cfg); render(lastSp); updateSpeeds(lastSp); scrollTo(0,0); };
+document.body.classList.toggle('compact',compact());
 $('btnSet').onclick=openSettings;
 $('sClose').onclick=()=>$('settings').classList.remove('show');
 $('sSave').onclick=()=>{ Object.assign(cfg,{key:$('sKey').value.trim(),type:$('sType').value,buf:$('sBuf').value,proxy:$('sProxy').value.trim()}); store.set('cfg',cfg); $('settings').classList.remove('show'); load(true); };
