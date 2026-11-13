@@ -56,7 +56,7 @@
 <body>
 <header>
   <div class="row">
-    <h1>✈️ 일산 → 인천공항</h1>
+    <h1>✈️ 일산 → 인천공항 T2</h1>
     <button id="btnCols" title="한 줄/두 줄">▦</button>
     <button id="btnRefresh" title="새로고침">⟳</button>
     <button id="btnSet" title="설정">⚙︎</button>
@@ -102,26 +102,35 @@
     </select>
     <label>중계 서버 주소 (선택)</label>
     <input id="sProxy" placeholder="비워두면 ITS 서버 직접 호출">
-    <div class="hint">경로: 일산IC → 수도권제1순환(김포대교) → 노오지JC → 인천공항고속도로(북인천·청라·영종대교) → 인천공항.<br>CCTV는 화면에 보이는 것만 재생해서 데이터와 배터리를 아낍니다. 영상을 누르면 크게 봅니다.<br>호출 절약: CCTV 목록 10분, 속도 3분 동안 저장해 둡니다.</div>
+    <div class="hint">경로(티맵 추천): 일산 경의로·호수로 → 킨텍스IC → 자유로 → 자유로JC → 수도권제1순환(김포대교) → 노오지JC → 인천공항고속도로(북인천·청라·영종대교) → 공항입구JC → 영종해안북로 → 제2여객터미널.<br>CCTV는 화면에 보이는 것만 재생해서 데이터와 배터리를 아낍니다. 영상을 누르면 크게 봅니다.<br>호출 절약: CCTV 목록 10분, 속도 3분 동안 저장해 둡니다.</div>
     <div class="row" style="margin-top:14px"><button id="sSave" class="on" style="flex:1">저장</button></div>
   </div>
 </div>
 
 <script>
-// ===== 경로 (경도, 위도) — 일산 → 인천공항 T1 =====
+// ===== 경로 (경도, 위도) — 티맵 추천경로: 일산 → 인천공항 T2 =====
 const ROUTE = [
-  [126.790,37.668], // 일산IC
-  [126.785,37.620], // 김포대교
-  [126.771,37.590], // 노오지JC
+  [126.760,37.680], // 출발 (일산서구 하이파크로·경의로)
+  [126.743,37.676], // 고양체육관 사거리
+  [126.752,37.670], // 호수로·문촌19단지 사거리
+  [126.738,37.657], // 킨텍스IC (자유로 진입)
+  [126.770,37.642], // 자유로 (장항IC 부근)
+  [126.797,37.627], // 자유로JC
+  [126.798,37.608], // 김포대교
+  [126.771,37.590], // 노오지JC (인천공항고속도로 진입)
   [126.735,37.578], // 김포공항 북측
   [126.688,37.561], // 북인천IC
   [126.640,37.547], // 청라IC
   [126.607,37.548], // 영종대교 동단
   [126.555,37.540], // 영종대교 서단
-  [126.494,37.497], // 공항신도시JC
-  [126.451,37.449]  // 인천공항 T1
+  [126.525,37.528], // 공항입구JC (진출)
+  [126.490,37.515], // 영종해안북로
+  [126.455,37.500], // 영종해안북로 (서측)
+  [126.440,37.482], // 제2터미널대로
+  [126.434,37.467]  // 인천공항 제2여객터미널
 ];
-const BBOX = {minX:126.40, maxX:126.83, minY:37.42, maxY:37.70};
+const ROAD_ORDER = [/자유로|77호/, /제1순환|외곽순환/, /공항/, /영종|해안북로|터미널/]; // 경로 순서
+const BBOX = {minX:126.41, maxX:126.82, minY:37.44, maxY:37.70};
 const BASE = 'https://openapi.its.go.kr:9443';
 const CCTV_MS = 10*60*1000, TRAF_MS = 3*60*1000;
 
@@ -190,12 +199,13 @@ async function loadTraffic(force){
   return raw;
 }
 function renderRoads(raw){
-  const want=[/공항/,/제1순환|외곽순환|수도권제1/];
+  const want=ROAD_ORDER;
+  const ord=r=>{const i=ROAD_ORDER.findIndex(x=>x.test(r));return i<0?9:i};
   const groups={};
   raw.filter(o=>o.spd>0 && want.some(r=>r.test(o.road))).forEach(o=>{
     const k=o.road+'|'+o.drc; (groups[k]=groups[k]||[]).push(o);
   });
-  const keys=Object.keys(groups).sort();
+  const keys=Object.keys(groups).sort((a,b)=>ord(a)-ord(b)||a.localeCompare(b));
   if(!keys.length){ $('roads').innerHTML='<div class="road"><div class="s">경로 도로의 속도 정보를 찾지 못했습니다.</div></div>'; return; }
   $('roads').innerHTML = keys.map(k=>{
     const [road,drc]=k.split('|'); const L=groups[k].sort((a,b)=>a.no-b.no);
