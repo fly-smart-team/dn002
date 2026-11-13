@@ -122,6 +122,8 @@ const NODES = [
 const SHAPE = {11:[[126.495,37.516]], 12:[[126.452,37.494],[126.440,37.480]]};
 const ROUTE_ROADS = /자유로|77호|제1순환|외곽순환|순환고속|인천국제공항|공항고속|신공항|영종해안북로|해안북로|제2터미널|공항대로/;
 const BBOX = {minX:126.41, maxX:126.83, minY:37.45, maxY:37.70};
+const EXCLUDE = /제2외곽|인천김포|북청라|검단양촌/; // 경로와 나란한 다른 도로
+const MAX_PLAY = 4; // 동시 재생 수 (브라우저 연결 제한)
 const BASE = 'https://openapi.its.go.kr:9443';
 const CCTV_MS = 10*60*1000, TRAF_MS = 3*60*1000;
 
@@ -175,70 +177,80 @@ async function loadCams(force){
         store.set(ck,{t:Date.now(),d:raw}); }
   const buf=+cfg.buf, seen=new Set();
   cams = raw.map(o=>Object.assign({},o,project(o.x,o.y)))
-    .filter(o=>o.d<=buf && !seen.has(o.name) && seen.add(o.name))
+    .filter(o=>o.d<=buf && !EXCLUDE.test(o.name) && !seen.has(o.name) && seen.add(o.name))
     .sort((a,b)=>a.along-b.along);
   cams.forEach(c=>c.seg=segOf(c.along));
   dbg.camsAll=raw.length; dbg.camsRoute=cams.length;
 }
 
+// 구간마다 좁은 영역(BBOX)으로 소통정보 조회 → 링크가 어느 구간에 있는지 알 수 있음
+function segBox(i){
+  const pts=[[NODES[i][1],NODES[i][2]],[NODES[i+1][1],NODES[i+1][2]],...(SHAPE[i]||[])];
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]), pad=0.004;
+  return {minX:Math.min(...xs)-pad,maxX:Math.max(...xs)+pad,minY:Math.min(...ys)-pad,maxY:Math.max(...ys)+pad};
+}
+async function trafficCall(box){
+  const base=(cfg.proxy||BASE).replace(/\/$/,'');
+  const p=new URLSearchParams(Object.assign({apiKey:cfg.key,getType:'json',type:'all',drcType:'all'},box));
+  const r=await fetch(`${base}/trafficInfo?${p}`); const txt=await r.text();
+  let j; try{j=JSON.parse(txt)}catch(e){throw new Error('trafficInfo 응답 해석 실패\n'+txt.slice(0,200))}
+  let d=j?.body?.items ?? j?.response?.data ?? j?.items ?? j?.data ?? [];
+  if(!Array.isArray(d)) d=[d];
+  if(!d.length){ const h=j?.header||j?.response?.header||{}; dbg.trafficMsg=(h.resultMsg||h.resultCode||txt.slice(0,150)); }
+  return d.filter(Boolean).map(o=>({road:(o.roadName||'').trim(),link:String(o.linkId||''),
+    s:String(o.startNodeId||''),e:String(o.endNodeId||''),spd:+o.speed}));
+}
 async function loadTraffic(force){
-  const c=store.get('traffic',null); let raw;
-  if(!force && c && Date.now()-c.t<TRAF_MS) raw=c.d;
-  else{ raw=(await api('trafficInfo',{type:'all',drcType:'all'})).map(o=>({
-          road:(o.roadName||'').trim(), link:String(o.linkId||''), s:String(o.startNodeId||''), e:String(o.endNodeId||''),
-          spd:+o.speed}));
-        store.set('traffic',{t:Date.now(),d:raw}); }
-  return raw;
+  const c=store.get('traffic2',null);
+  if(!force && c && Date.now()-c.t<TRAF_MS) return c.d;
+  const per=await Promise.all(NODES.slice(0,-1).map((n,i)=>trafficCall(segBox(i)).catch(e=>{dbg.trafficErr=e.message;return []})));
+  store.set('traffic2',{t:Date.now(),d:per});
+  return per; // per[i] = 구간 i 영역의 링크들
 }
 
-// ===== 공항 방향 구간 속도 =====
-// 경로 도로 링크를 노드로 이어 체인 구성 → CCTV 위치로 체인을 경로에 고정
-// → 경로 거리가 증가하는 체인만(=공항 방향) 사용 → 링크를 구간에 배분해 평균
-function segmentSpeeds(traffic){
-  const all={}; traffic.forEach(t=>{ if(t.link) all[t.link]=t; });
-  const links=traffic.filter(t=>t.link&&ROUTE_ROADS.test(t.road)&&t.s&&t.e);
+// 공항 방향 판별: 링크를 노드로 이어 체인을 만들고, 체인을 따라 구간 번호가 커지면 공항 방향
+function segmentSpeeds(per){
+  const L={}; // link -> {..., segs:Set}
+  per.forEach((arr,i)=>arr.forEach(o=>{ if(!o.link) return; (L[o.link]=L[o.link]||Object.assign({segs:new Set()},o)).segs.add(i); }));
+  const all=Object.values(L);
+  const roadLinks=all.filter(l=>ROUTE_ROADS.test(l.road)&&l.s&&l.e);
+  const links=roadLinks.length?roadLinks:all.filter(l=>l.s&&l.e);
   const byStart=new Map(); links.forEach(l=>{ if(!byStart.has(l.s)) byStart.set(l.s,[]); byStart.get(l.s).push(l); });
   const ends=new Set(links.map(l=>l.e)), used=new Set(), chains=[];
   const walk=h=>{const c=[];let x=h;while(x&&!used.has(x.link)){used.add(x.link);c.push(x);
     const nx=(byStart.get(x.e)||[]).filter(n=>!used.has(n.link)&&n.e!==x.s); x=nx.find(n=>n.road===x.road)||nx[0];}return c};
   links.filter(l=>!ends.has(l.s)).forEach(h=>{const c=walk(h);if(c.length)chains.push(c)});
   links.forEach(l=>{if(!used.has(l.link)){const c=walk(l);if(c.length)chains.push(c)}});
-
-  const camAl={}; cams.forEach(c=>{ if(c.link) (camAl[c.link]=camAl[c.link]||[]).push(c.along); });
-  const segVals=NODES.map(()=>[]); linkSpeed={};
-  let fwd=0;
+  const mid=l=>{const a=[...l.segs];return a.reduce((s,v)=>s+v,0)/a.length};
+  const segVals=NODES.map(()=>[]); linkSpeed={}; let fwd=0, fwdLinks=0;
   chains.forEach(ch=>{
-    const anc=[]; ch.forEach((l,i)=>{ if(camAl[l.link]) anc.push([i,avg(camAl[l.link])]); });
-    if(anc.length<2) return;
-    const [i0,a0]=anc[0], [i1,a1]=anc[anc.length-1];
-    if(!(a1>a0 && i1>i0)) return;
+    if(ch.length<2) return;
+    const first=mid(ch[0]), last=mid(ch[ch.length-1]);
+    if(!(last>first)) return; // 구간 번호가 증가해야 공항 방향
     fwd++;
-    const k=(a1-a0)/(i1-i0);
-    ch.forEach((l,i)=>{
-      let al;
-      if(i<=i0) al=a0-(i0-i)*k; else if(i>=i1) al=a1+(i-i1)*k;
-      else { let j=0; while(anc[j+1][0]<i) j++; const p=anc[j],q=anc[j+1]; al=p[1]+(q[1]-p[1])*(i-p[0])/(q[0]-p[0]); }
-      if(al<NODE_AL[0]-0.3||al>TOTAL+0.3) return;
-      if(l.spd>0){ segVals[segOf(al)].push(l.spd); linkSpeed[l.link]=l.spd; }
-    });
+    ch.forEach(l=>{ if(l.spd>0){ fwdLinks++; linkSpeed[l.link]=l.spd; l.segs.forEach(i=>segVals[i].push(l.spd)); } });
   });
-  const res=NODES.map((n,i)=>{
-    if(segVals[i].length) return {v:avg(segVals[i]),src:'link'};
-    const cv=cams.filter(c=>c.seg===i&&all[c.link]&&all[c.link].spd>0).map(c=>all[c.link].spd);
-    return cv.length?{v:avg(cv),src:'cam'}:{v:0,src:''};
-  });
-  dbg.links=traffic.length; dbg.routeLinks=links.length; dbg.chains=chains.length; dbg.fwdChains=fwd;
-  dbg.camLinkMatch=cams.filter(c=>all[c.link]).length;
+  dbg.links=all.length; dbg.routeLinks=roadLinks.length; dbg.chains=chains.length; dbg.fwdChains=fwd; dbg.fwdLinks=fwdLinks;
+  dbg.perSeg=per.map(a=>a.length).join(',');
+  dbg.roads=[...new Set(all.map(l=>l.road))].slice(0,40).join(', ');
+  dbg.camLinkMatch=cams.filter(c=>L[c.link]).length;
   dbg.camNames=cams.map(c=>`${NODES[c.seg][0]}|${c.name}|${c.d.toFixed(2)}`).join('\n');
-  dbg.roads=[...new Set(traffic.map(t=>t.road))].slice(0,40).join(', ');
-  return res;
+  return NODES.map((n,i)=>segVals[i].length?{v:avg(segVals[i])}:{v:0});
 }
 
 // ===== 렌더 =====
-const io=new IntersectionObserver(es=>es.forEach(e=>{const t=tiles.get(e.target); if(t) e.isIntersecting?startTile(e.target,t):stopTile(t);}),{rootMargin:'120px'});
+const visible=new Set();
+const io=new IntersectionObserver(es=>{ es.forEach(e=>{ e.isIntersecting?visible.add(e.target):visible.delete(e.target); }); schedule(); },{threshold:0.35});
+let schedT=null;
+function schedule(){ clearTimeout(schedT); schedT=setTimeout(()=>{
+  if($('player').classList.contains('show')) return;
+  const order=[...tiles.keys()].filter(el=>visible.has(el)).slice(0,MAX_PLAY);
+  tiles.forEach((t,el)=>{ if(!order.includes(el)) stopTile(t); });
+  order.forEach(el=>startTile(el,tiles.get(el)));
+},150); }
 
 function render(sp){
-  tiles.forEach((t,el)=>{stopTile(t);io.unobserve(el)}); tiles.clear();
+  tiles.forEach((t,el)=>{stopTile(t);io.unobserve(el)}); tiles.clear(); visible.clear();
   const R=$('route'); R.innerHTML='';
   let mins=0, known=0;
   NODES.forEach((n,i)=>{
@@ -250,7 +262,7 @@ function render(sp){
     const sg=document.createElement('div'); sg.className='seg';
     sg.innerHTML=`<div class="l"><div class="rail" style="background:${colorOf(s.v)}"></div>
       <div class="info"><span class="sp" style="color:${colorOf(s.v)}">${s.v>0?s.v.toFixed(0):'—'}<small>${s.v>0?'km/h':''}</small></span>
-      <span>${esc(n[3])} · ${len.toFixed(1)}km${s.src==='cam'?' · 참고':''}</span></div></div>`;
+      <span>${esc(n[3])} · ${len.toFixed(1)}km</span></div></div>`;
     const right=document.createElement('div'); right.className='r';
     const list=cams.filter(c=>c.seg===i);
     if(!list.length) right.innerHTML='<div class="none">CCTV 없음</div>';
@@ -282,8 +294,10 @@ function startTile(el,t){
   el.prepend(v); t.media=v;
   t.hls=attach(v,t.cam.url,()=>{el.querySelector('.cap .n').textContent='⚠️ '+t.cam.name});
   v.play().catch(()=>{});
+  t.timer=setTimeout(()=>{ if(t.media===v && !(v.readyState>=2)) el.querySelector('.cap .n').textContent='⏳ '+t.cam.name; },8000);
 }
 function stopTile(t){
+  clearTimeout(t.timer);
   if(t.hls){t.hls.destroy();t.hls=null}
   if(t.media){ if(t.media.tagName==='VIDEO'){t.media.pause();t.media.removeAttribute('src');t.media.load()} t.media.remove(); t.media=null; }
 }
@@ -300,18 +314,18 @@ function openPlayer(i){
   popHls=attach(v,c.url,()=>{$('pMsg').textContent='영상 재생 실패 — ⟳로 새로 받아 보세요.'}); v.play().catch(()=>{});
 }
 function stopPop(){const v=$('vid'); if(popHls){popHls.destroy();popHls=null} v.pause(); v.removeAttribute('src'); v.load();}
-function closePlayer(){ stopPop(); $('player').classList.remove('show');
-  tiles.forEach((t,el)=>{const r=el.getBoundingClientRect(); if(r.bottom>-120&&r.top<innerHeight+120) startTile(el,t)}); }
+function closePlayer(){ stopPop(); $('player').classList.remove('show'); schedule(); }
 
 // ===== 실행 =====
 async function load(force){
   if(!cfg.key){ status('⚙︎ 설정에서 인증키를 먼저 입력하세요.',true); openSettings(); return; }
-  status('불러오는 중…'); const errs=[]; let traffic=[];
+  status('불러오는 중…'); const errs=[]; let traffic=[]; dbg={};
   await loadCams(force).catch(e=>errs.push('CCTV: '+e.message));
   await loadTraffic(force).then(r=>traffic=r).catch(e=>errs.push('속도: '+e.message));
   render(segmentSpeeds(traffic));
   const now=new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
-  errs.length?status(errs.join('\n'),true):status(`${now} 기준`);
+  if(dbg.trafficMsg&&!dbg.links) errs.push('속도: '+dbg.trafficMsg); if(dbg.trafficErr&&!dbg.links) errs.push('속도: '+dbg.trafficErr);
+  errs.length?status(errs.join('\n'),true):status(`${now} 기준 · 동시 재생 ${MAX_PLAY}개 (스크롤하면 바뀜)`);
   $('dbg').textContent=JSON.stringify(dbg,null,1);
 }
 function openSettings(){ $('sKey').value=cfg.key; $('sType').value=cfg.type; $('sBuf').value=cfg.buf; $('sProxy').value=cfg.proxy; $('settings').classList.add('show'); }
