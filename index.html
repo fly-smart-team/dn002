@@ -62,6 +62,7 @@
 <header>
   <div class="row">
     <h1>✈️ 이산포IC → 인천공항 T2</h1>
+    <button id="btnMode" title="영상/정지화면 전환">🎥</button>
     <button id="btnRefresh" title="새로고침">⟳</button>
     <button id="btnSet" title="설정">⚙︎</button>
   </div>
@@ -260,9 +261,11 @@ function segmentSpeeds(per){
 const visible=new Set();
 const io=new IntersectionObserver(es=>{ es.forEach(e=>{ e.isIntersecting?visible.add(e.target):visible.delete(e.target); }); schedule(); },{threshold:0.35});
 let schedT=null;
+const still=()=>cfg.type==='3';
+const STILL_MS=20000; // 정지화면 갱신 주기
 function schedule(){ clearTimeout(schedT); schedT=setTimeout(()=>{
   if($('player').classList.contains('show')) return;
-  const order=[...tiles.keys()].filter(el=>visible.has(el)).slice(0,MAX_PLAY);
+  const order=[...tiles.keys()].filter(el=>visible.has(el)).slice(0,still()?99:MAX_PLAY);
   tiles.forEach((t,el)=>{ if(!order.includes(el)) stopTile(t); });
   order.forEach(el=>startTile(el,tiles.get(el)));
 },150); }
@@ -320,7 +323,14 @@ function attach(v,url,onErr){
 }
 function startTile(el,t){
   if(t.media) return;
-  if(isImg(t.cam)){ const im=document.createElement('img'); im.src=t.cam.url; el.prepend(im); t.media=im; return; }
+  if(isImg(t.cam)||still()){
+    const im=document.createElement('img'); const cap=el.querySelector('.cap .n');
+    const bust=u=>u+(u.includes('?')?'&':'?')+'_t='+Date.now();
+    im.onerror=()=>{ cap.textContent=(/^http:/.test(t.cam.url)?'⚠️ http 주소라 브라우저 차단 · ':'⚠️ 사진 없음 · ')+t.cam.name; el.classList.add('dead'); };
+    im.onload=()=>{ el.classList.remove('dead'); cap.textContent=t.cam.name; };
+    im.src=t.cam.url; el.prepend(im); t.media=im;
+    t.timer=setInterval(()=>{ if(t.media===im) im.src=bust(t.cam.url); },STILL_MS);
+    return; }
   const v=document.createElement('video'); v.muted=true; v.playsInline=true; v.autoplay=true; v.setAttribute('playsinline','');
   el.prepend(v); t.media=v;
   const fail=()=>{ if(t.media!==v) return; clearTimeout(t.timer); retryTile(el,t); };
@@ -351,7 +361,7 @@ async function retryTile(el,t){
   if(visible.has(el)) startTile(el,t);
 }
 function stopTile(t){
-  clearTimeout(t.timer);
+  clearTimeout(t.timer); clearInterval(t.timer);
   if(t.hls){t.hls.destroy();t.hls=null}
   if(t.media){ if(t.media.tagName==='VIDEO'){t.media.pause();t.media.removeAttribute('src');t.media.load()} t.media.remove(); t.media=null; }
 }
@@ -371,7 +381,7 @@ function stopPop(){const v=$('vid'); if(popHls){popHls.destroy();popHls=null} v.
 function closePlayer(){ stopPop(); $('player').classList.remove('show'); schedule(); }
 
 // ===== 실행 =====
-let loading=false;
+let loading=false, lastSp=[];
 async function load(force){
   if(!cfg.key){ status('⚙︎ 설정에서 인증키를 먼저 입력하세요.',true); openSettings(); return; }
   if(loading) return; loading=true;
@@ -383,7 +393,7 @@ async function load(force){
     status('구간 속도 받는 중…');
     let traffic=[];
     await loadTraffic(force).then(r=>traffic=r).catch(e=>errs.push('속도: '+e.message));
-    updateSpeeds(segmentSpeeds(traffic));
+    lastSp=segmentSpeeds(traffic); updateSpeeds(lastSp);
     if(!dbg.links){ if(dbg.trafficMsg) errs.push('속도: '+dbg.trafficMsg); else if(dbg.trafficErr) errs.push('속도: '+dbg.trafficErr); }
   }catch(e){ errs.push('앱 오류: '+(e&&e.message||e)); }
   loading=false;
@@ -394,6 +404,15 @@ async function load(force){
 function openSettings(){ $('sKey').value=cfg.key; $('sType').value=cfg.type; $('sBuf').value=cfg.buf; $('sProxy').value=cfg.proxy; $('settings').classList.add('show'); }
 
 $('btnRefresh').onclick=()=>load(true);
+function modeIcon(){ $('btnMode').textContent=still()?'🖼':'🎥'; }
+$('btnMode').onclick=async()=>{
+  cfg.type=still()?'4':'3'; store.set('cfg',cfg); modeIcon();
+  status(still()?'정지화면 목록 받는 중…':'영상 목록 받는 중…');
+  try{ await loadCams(false); render(lastSp); updateSpeeds(lastSp);
+       status(still()?`정지화면 · ${STILL_MS/1000}초마다 자동 갱신`:`실시간 영상 · 동시 재생 ${MAX_PLAY}개`);
+  }catch(e){ status('목록 오류: '+e.message,true); }
+};
+modeIcon();
 $('btnSet').onclick=openSettings;
 $('sClose').onclick=()=>$('settings').classList.remove('show');
 $('sSave').onclick=()=>{ Object.assign(cfg,{key:$('sKey').value.trim(),type:$('sType').value,buf:$('sBuf').value,proxy:$('sProxy').value.trim()}); store.set('cfg',cfg); $('settings').classList.remove('show'); load(true); };
