@@ -40,7 +40,9 @@
   .tile .cap{position:absolute;left:0;right:0;bottom:0;padding:12px 6px 3px;font-size:11px;background:linear-gradient(transparent,rgba(0,0,0,.85));display:flex;gap:4px;align-items:flex-end}
   .tile.dead{opacity:.55}
   .tile .cap .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tile.flip video,.tile.flip img,#player.flip #vid,#player.flip #pImg{transform:scaleX(-1)}
+  .tile canvas{width:100%;height:100%;object-fit:cover;display:block}
+  .tile .sv{position:absolute;inset:0;opacity:0;pointer-events:none}
+  .tile.flip canvas,.tile.flip video,.tile.flip img,#player.flip #vid,#player.flip #pImg{transform:scaleX(-1)}
   .fl{position:absolute;top:5px;right:5px;z-index:2;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:2px 7px;font-size:13px}
   .tile.flip .fl{background:var(--acc);color:#0f172a;border-color:var(--acc)}
   .spd{font-weight:800;padding:0 5px;border-radius:5px;color:#0f172a;font-size:11px}
@@ -89,7 +91,6 @@
     <select id="sType">
       <option value="4">실시간 HLS (HTTPS) — 권장</option>
       <option value="1">실시간 HLS (HTTP)</option>
-      <option value="3">정지영상</option>
     </select>
     <label>경로 폭 (경로에서 이 거리 안의 CCTV만)</label>
     <select id="sBuf">
@@ -261,10 +262,35 @@ function segmentSpeeds(per){
 const visible=new Set();
 const io=new IntersectionObserver(es=>{ es.forEach(e=>{ e.isIntersecting?visible.add(e.target):visible.delete(e.target); }); schedule(); },{threshold:0.35});
 let schedT=null;
-const still=()=>cfg.type==='3';
-const STILL_MS=20000; // 정지화면 갱신 주기
+if(cfg.type==='3'){ cfg.type='4'; cfg.still=true; store.set('cfg',cfg); }
+const still=()=>!!cfg.still;
+const STILL_MS=30000, SNAP_CONC=3; // 정지화면 갱신 주기, 동시 캡처 수
+const snapQ=[]; let snapActive=0;
+function requestSnap(el,t){ if(t.snapping) return; t.snapping=true; snapQ.push([el,t]); pump(); }
+function pump(){ while(snapActive<SNAP_CONC && snapQ.length){ const [el,t]=snapQ.shift();
+  if(!tiles.has(el)||!still()){ t.snapping=false; continue; }
+  snapActive++; snap(el,t).finally(()=>{ snapActive--; t.snapping=false; pump(); }); } }
+function snap(el,t){ return new Promise(res=>{
+  const cap=el.querySelector('.cap .n');
+  const v=document.createElement('video'); v.className='sv'; v.muted=true; v.playsInline=true; v.setAttribute('playsinline',''); el.appendChild(v);
+  let h=null, done=false;
+  const finish=async ok=>{ if(done) return; done=true; clearTimeout(to);
+    if(ok && v.videoWidth){ let c=el.querySelector('canvas'); if(!c){ c=document.createElement('canvas'); el.prepend(c); }
+      c.width=v.videoWidth; c.height=v.videoHeight; c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+      t.snapAt=Date.now(); t.fails=0; el.classList.remove('dead');
+      cap.textContent=`${t.cam.name} · ${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`; }
+    else { t.fails=(t.fails||0)+1; if(t.fails===1){ await freshUrls(); t.snapAt=0; } else { el.classList.add('dead'); cap.textContent='⚠️ 화면 없음 · '+t.cam.name; t.snapAt=Date.now(); } }
+    if(h) h.destroy(); v.pause(); v.removeAttribute('src'); v.load(); v.remove(); res(); };
+  const to=setTimeout(()=>finish(false),10000);
+  v.addEventListener('playing',()=>setTimeout(()=>finish(true),400),{once:true});
+  if(!el.querySelector('canvas')) cap.textContent='⏳ '+t.cam.name;
+  h=attach(v,t.cam.url,()=>finish(false)); v.play().catch(()=>{});
+}); }
+setInterval(()=>{ if(!still()||document.hidden||$('player').classList.contains('show')) return;
+  tiles.forEach((t,el)=>{ if(visible.has(el) && Date.now()-(t.snapAt||0)>STILL_MS) requestSnap(el,t); }); },3000);
 function schedule(){ clearTimeout(schedT); schedT=setTimeout(()=>{
   if($('player').classList.contains('show')) return;
+  if(still()){ tiles.forEach((t,el)=>{ stopTile(t); if(visible.has(el) && !t.snapAt) requestSnap(el,t); }); return; }
   const order=[...tiles.keys()].filter(el=>visible.has(el)).slice(0,still()?99:MAX_PLAY);
   tiles.forEach((t,el)=>{ if(!order.includes(el)) stopTile(t); });
   order.forEach(el=>startTile(el,tiles.get(el)));
@@ -323,14 +349,7 @@ function attach(v,url,onErr){
 }
 function startTile(el,t){
   if(t.media) return;
-  if(isImg(t.cam)||still()){
-    const im=document.createElement('img'); const cap=el.querySelector('.cap .n');
-    const bust=u=>u+(u.includes('?')?'&':'?')+'_t='+Date.now();
-    im.onerror=()=>{ cap.textContent=(/^http:/.test(t.cam.url)?'⚠️ http 주소라 브라우저 차단 · ':'⚠️ 사진 없음 · ')+t.cam.name; el.classList.add('dead'); };
-    im.onload=()=>{ el.classList.remove('dead'); cap.textContent=t.cam.name; };
-    im.src=t.cam.url; el.prepend(im); t.media=im;
-    t.timer=setInterval(()=>{ if(t.media===im) im.src=bust(t.cam.url); },STILL_MS);
-    return; }
+  if(isImg(t.cam)){ const im=document.createElement('img'); im.src=t.cam.url; el.prepend(im); t.media=im; return; }
   const v=document.createElement('video'); v.muted=true; v.playsInline=true; v.autoplay=true; v.setAttribute('playsinline','');
   el.prepend(v); t.media=v;
   const fail=()=>{ if(t.media!==v) return; clearTimeout(t.timer); retryTile(el,t); };
@@ -405,12 +424,10 @@ function openSettings(){ $('sKey').value=cfg.key; $('sType').value=cfg.type; $('
 
 $('btnRefresh').onclick=()=>load(true);
 function modeIcon(){ $('btnMode').textContent=still()?'🖼':'🎥'; }
-$('btnMode').onclick=async()=>{
-  cfg.type=still()?'4':'3'; store.set('cfg',cfg); modeIcon();
-  status(still()?'정지화면 목록 받는 중…':'영상 목록 받는 중…');
-  try{ await loadCams(false); render(lastSp); updateSpeeds(lastSp);
-       status(still()?`정지화면 · ${STILL_MS/1000}초마다 자동 갱신`:`실시간 영상 · 동시 재생 ${MAX_PLAY}개`);
-  }catch(e){ status('목록 오류: '+e.message,true); }
+$('btnMode').onclick=()=>{
+  cfg.still=!still(); store.set('cfg',cfg); modeIcon(); snapQ.length=0;
+  render(lastSp); updateSpeeds(lastSp);
+  status(still()?`정지화면 · ${STILL_MS/1000}초마다 자동 갱신 · 누르면 실시간 영상`:`실시간 영상 · 동시 재생 ${MAX_PLAY}개`);
 };
 modeIcon();
 $('btnSet').onclick=openSettings;
