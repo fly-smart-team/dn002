@@ -38,6 +38,7 @@
   .tile{position:relative;background:#000;border-radius:9px;overflow:hidden;aspect-ratio:16/10;border:1px solid var(--line)}
   .tile video,.tile img{width:100%;height:100%;object-fit:cover;display:block}
   .tile .cap{position:absolute;left:0;right:0;bottom:0;padding:12px 6px 3px;font-size:11px;background:linear-gradient(transparent,rgba(0,0,0,.85));display:flex;gap:4px;align-items:flex-end}
+  .tile.dead{opacity:.55}
   .tile .cap .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tile.flip video,.tile.flip img,#player.flip #vid,#player.flip #pImg{transform:scaleX(-1)}
   .fl{position:absolute;top:5px;right:5px;z-index:2;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:2px 7px;font-size:13px}
@@ -128,7 +129,7 @@ const BBOX = {minX:126.41, maxX:126.83, minY:37.45, maxY:37.70};
 const EXCLUDE = /제2외곽|인천김포|북청라|검단양촌/; // 경로와 나란한 다른 도로
 const MAX_PLAY = 4; // 동시 재생 수 (브라우저 연결 제한)
 const BASE = 'https://openapi.its.go.kr:9443';
-const CCTV_MS = 10*60*1000, TRAF_MS = 3*60*1000;
+const CCTV_MS = 5*60*1000, TRAF_MS = 3*60*1000;
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -144,6 +145,7 @@ const tiles = new Map();
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function status(m,e){const s=$('status');s.textContent=m;s.className=e?'err':''}
 const colorOf = v => !(v>0)?'var(--n)':v>=70?'var(--g)':v>=30?'var(--y)':'var(--r)';
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
 
 // ===== 경로 기하 =====
@@ -208,8 +210,16 @@ async function trafficCall(box){
 async function loadTraffic(force){
   const c=store.get('traffic2',null);
   if(!force && c && Date.now()-c.t<TRAF_MS) return c.d;
-  const per=await Promise.all(NODES.slice(0,-1).map((n,i)=>trafficCall(segBox(i)).catch(e=>{dbg.trafficErr=e.message;return []})));
-  store.set('traffic2',{t:Date.now(),d:per});
+  const n=NODES.length-1, per=new Array(n).fill(null);
+  const one=async i=>{ for(let a=0;a<2;a++){ try{ return await trafficCall(segBox(i)); }catch(e){ dbg.trafficErr=e.message; await sleep(600); } } return null; };
+  for(let i=0;i<n;i+=3){ const r=await Promise.all([i,i+1,i+2].filter(k=>k<n).map(one)); r.forEach((v,k)=>per[i+k]=v); }
+  // 실패한 구간은 이전 정보로 채움
+  const prev=c?.d||[]; let filled=0;
+  per.forEach((v,i)=>{ if(!v||!v.length){ if(prev[i]&&prev[i].length){ per[i]=prev[i]; filled++; } else per[i]=[]; } });
+  const got=per.filter(v=>v.length).length;
+  dbg.trafficOk=`${got}/${n} 구간` + (filled?` (이전 정보 ${filled}개)`:'');
+  if(got && filled<got) store.set('traffic2',{t:Date.now(),d:per});
+  if(!got) dbg.trafficFail=true;
   return per; // per[i] = 구간 i 영역의 링크들
 }
 
@@ -285,13 +295,13 @@ function render(sp){
   });
   const totalLen=NODE_AL[NODE_AL.length-1]-NODE_AL[0];
   if(known>0){ const est=mins*totalLen/known; $('eta').innerHTML=`<b>약 ${Math.round(est)}분</b>${totalLen.toFixed(0)}km · CCTV ${cams.length}개${known<totalLen*0.9?' · 일부 구간 정보 없음':''}`; }
-  else $('eta').textContent=`${totalLen.toFixed(0)}km · CCTV ${cams.length}개 · 속도 정보 없음`;
+  else $('eta').textContent=`${totalLen.toFixed(0)}km · CCTV ${cams.length}개 · 속도 정보 없음`+(dbg.trafficFail?` (${dbg.trafficMsg||dbg.trafficErr||'ITS 응답 없음'})`:'');
 }
 
 const isImg=c=>/jpe?g|png/i.test(c.fmt)||/\.(jpe?g|png)(\?|$)/i.test(c.url);
 function attach(v,url,onErr){
   if(v.canPlayType('application/vnd.apple.mpegurl')){ v.src=url; return null; }
-  if(window.Hls&&Hls.isSupported()){ const h=new Hls({maxBufferLength:6,backBufferLength:0});
+  if(window.Hls&&Hls.isSupported()){ const h=new Hls({maxBufferLength:6,backBufferLength:0,manifestLoadingMaxRetry:2,levelLoadingMaxRetry:2,fragLoadingMaxRetry:3});
     h.loadSource(url); h.attachMedia(v); h.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)onErr&&onErr()}); return h; }
   v.src=url; return null;
 }
@@ -300,9 +310,31 @@ function startTile(el,t){
   if(isImg(t.cam)){ const im=document.createElement('img'); im.src=t.cam.url; el.prepend(im); t.media=im; return; }
   const v=document.createElement('video'); v.muted=true; v.playsInline=true; v.autoplay=true; v.setAttribute('playsinline','');
   el.prepend(v); t.media=v;
-  t.hls=attach(v,t.cam.url,()=>{el.querySelector('.cap .n').textContent='⚠️ '+t.cam.name});
+  const fail=()=>{ if(t.media!==v) return; clearTimeout(t.timer); retryTile(el,t); };
+  t.hls=attach(v,t.cam.url,fail);
   v.play().catch(()=>{});
-  t.timer=setTimeout(()=>{ if(t.media===v && !(v.readyState>=2)) el.querySelector('.cap .n').textContent='⏳ '+t.cam.name; },8000);
+  t.timer=setTimeout(()=>{ if(t.media===v && !(v.readyState>=2)) fail(); },8000);
+  v.addEventListener('playing',()=>{ t.tries=0; el.querySelector('.cap .n').textContent=t.cam.name; },{once:true});
+}
+// 스트림 주소가 만료됐을 수 있으므로 목록을 새로 받아 다시 시도 (1분에 1번만 새로 받음)
+let urlRefreshAt=0, urlRefreshing=null;
+async function freshUrls(){
+  if(Date.now()-urlRefreshAt<60000) return urlRefreshing;
+  urlRefreshAt=Date.now();
+  urlRefreshing=api('cctvInfo',{type:'all',cctvType:cfg.type}).then(d=>{
+    const m={}; d.forEach(o=>{ if(o.cctvurl) m[(o.cctvname||'').trim()]=o.cctvurl; });
+    cams.forEach(c=>{ if(m[c.name]) c.url=m[c.name]; });
+    const ck='cctv_'+cfg.type, cc=store.get(ck,null); if(cc){ cc.d.forEach(o=>{ if(m[o.name]) o.url=m[o.name]; }); cc.t=Date.now(); store.set(ck,cc); }
+  }).catch(()=>{});
+  return urlRefreshing;
+}
+async function retryTile(el,t){
+  const cap=el.querySelector('.cap .n');
+  t.tries=(t.tries||0)+1;
+  if(t.tries>2){ stopTile(t); cap.textContent='⚠️ 영상 없음 · '+t.cam.name; el.classList.add('dead'); return; }
+  cap.textContent='⏳ 다시 연결 중 · '+t.cam.name;
+  stopTile(t); await freshUrls(); await sleep(400);
+  if(visible.has(el)) startTile(el,t);
 }
 function stopTile(t){
   clearTimeout(t.timer);
