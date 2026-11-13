@@ -157,7 +157,7 @@ async function api(path, params){
     minX:BBOX.minX,maxX:BBOX.maxX,minY:BBOX.minY,maxY:BBOX.maxY},params));
   const r=await fetch(`${base}/${path}?${p}`); const txt=await r.text();
   let j; try{j=JSON.parse(txt)}catch(e){throw new Error(path+' 응답 해석 실패\n'+txt.slice(0,300))}
-  let d=j?.response?.data ?? j?.data ?? [];
+  let d=j?.response?.data ?? j?.body?.items ?? j?.data ?? j?.items ?? [];
   if(!Array.isArray(d)) d=[d];
   return d.filter(Boolean);
 }
