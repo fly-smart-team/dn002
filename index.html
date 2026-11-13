@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="공항CCTV">
+<meta name="theme-color" content="#0f172a">
+<title>공항 가는 길 CCTV</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#e2e8f0;--sub:#94a3b8;--acc:#38bdf8;--star:#fbbf24;--err:#f87171}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;padding-bottom:env(safe-area-inset-bottom)}
+  header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 14px 8px;border-bottom:1px solid var(--line)}
+  .row{display:flex;align-items:center;gap:8px}
+  h1{font-size:18px;margin:0;flex:1}
+  button{font:inherit;color:var(--txt);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+  button.on{background:var(--acc);color:#0f172a;border-color:var(--acc);font-weight:700}
+  .tabs{margin-top:8px}
+  .tabs button{flex:1}
+  input,select{font:inherit;width:100%;background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+  #q{margin-top:8px}
+  .chips{display:flex;gap:6px;overflow-x:auto;margin-top:8px;padding-bottom:2px}
+  .chips button{white-space:nowrap;padding:5px 10px;font-size:13px}
+  #status{font-size:12px;color:var(--sub);padding:6px 14px}
+  #status.err{color:var(--err);white-space:pre-wrap;word-break:break-all}
+  ul{list-style:none;margin:0;padding:0 10px 20px}
+  li{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0}
+  li .nm{flex:1;font-size:15px}
+  li .d{font-size:12px;color:var(--sub)}
+  .st{background:none;border:none;font-size:22px;padding:0 4px;color:var(--sub)}
+  .st.f{color:var(--star)}
+  #player,#settings{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10;display:none;flex-direction:column;padding:calc(12px + env(safe-area-inset-top)) 12px 12px}
+  #player.show,#settings.show{display:flex}
+  #pTitle{flex:1;font-weight:700}
+  video,#pImg{width:100%;max-height:70vh;background:#000;border-radius:10px;margin-top:10px}
+  #pImg{display:none;object-fit:contain}
+  .nav{margin-top:10px}
+  .nav button{flex:1}
+  #settings .box{background:var(--card);border-radius:14px;padding:16px;margin-top:20px}
+  #settings label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
+  .hint{font-size:12px;color:var(--sub);margin-top:6px;line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <div class="row">
+    <h1>✈️ 공항 가는 길 CCTV</h1>
+    <button id="btnRefresh" title="새로고침">⟳</button>
+    <button id="btnSet" title="설정">⚙︎</button>
+  </div>
+  <div class="row tabs">
+    <button id="tabFav" class="on">★ 즐겨찾기</button>
+    <button id="tabAll">전체 구간</button>
+  </div>
+  <input id="q" type="search" placeholder="CCTV 이름 검색 (예: 영종대교)">
+  <div class="chips" id="chips"></div>
+</header>
+<div id="status">불러오는 중…</div>
+<ul id="list"></ul>
+
+<div id="player">
+  <div class="row"><div id="pTitle"></div><button id="pClose">닫기</button></div>
+  <video id="vid" playsinline muted autoplay controls></video>
+  <img id="pImg" alt="">
+  <div class="row nav"><button id="pPrev">◀ 이전</button><button id="pNext">다음 ▶</button></div>
+  <div class="hint" id="pMsg"></div>
+</div>
+
+<div id="settings">
+  <div class="row"><div style="flex:1;font-weight:700">설정</div><button id="sClose">닫기</button></div>
+  <div class="box">
+    <label>ITS 인증키</label>
+    <input id="sKey" placeholder="마이페이지의 인증키">
+    <label>영상 유형</label>
+    <select id="sType">
+      <option value="4">실시간 HLS (HTTPS) — 권장</option>
+      <option value="1">실시간 HLS (HTTP)</option>
+      <option value="3">정지영상</option>
+    </select>
+    <label>도로 종류</label>
+    <select id="sRoad">
+      <option value="all">고속도로 + 국도</option>
+      <option value="ex">고속도로만</option>
+      <option value="its">국도만</option>
+    </select>
+    <label>중계 서버 주소 (선택)</label>
+    <input id="sProxy" placeholder="비워두면 ITS 서버 직접 호출">
+    <div class="hint">인증키는 이 기기에만 저장되고 코드에는 들어가지 않습니다.<br>목록은 10분간 저장해 두어 호출 횟수를 아낍니다. ⟳ 버튼은 강제로 새로 받습니다.</div>
+    <div class="row" style="margin-top:14px"><button id="sSave" class="on" style="flex:1">저장</button></div>
+  </div>
+</div>
+
+<script>
+// ===== 설정값 =====
+const BBOX = {minX:126.38, maxX:126.82, minY:37.40, maxY:37.72}; // 일산 ~ 영종도
+const HOME = {x:126.770, y:37.676};                               // 일산 (경로 순 정렬 기준점)
+const CHIPS = ['전체','공항','영종','인천대교','북인천','김포','청라','일산','자유로'];
+const CACHE_MS = 10*60*1000;
+const DEFAULT_BASE = 'https://openapi.its.go.kr:9443';
+
+const $ = id => document.getElementById(id);
+const store = {
+  get:(k,d)=>{try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v)}catch(e){return d}},
+  set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+};
+let cfg = store.get('cfg',{key:'',type:'4',road:'all',proxy:''});
+let favs = new Set(store.get('favs',[]));
+let all = [], view = [], tab = favs.size ? 'fav' : 'all', chip = '전체', cur = -1, hls = null;
+
+function status(msg, err){ const s=$('status'); s.textContent=msg; s.className=err?'err':''; }
+
+async function load(force){
+  if(!cfg.key){ status('⚙︎ 설정에서 인증키를 먼저 입력하세요.', true); openSettings(); return; }
+  const ck = 'cache_'+cfg.type+'_'+cfg.road;
+  const c = store.get(ck,null);
+  if(!force && c && Date.now()-c.t < CACHE_MS){ all=c.d; render(); status(`${all.length}개 · ${Math.round((Date.now()-c.t)/60000)}분 전 목록`); return; }
+  status('ITS에서 CCTV 목록 받는 중…');
+  const base = (cfg.proxy||DEFAULT_BASE).replace(/\/$/,'');
+  const p = new URLSearchParams({apiKey:cfg.key,type:cfg.road,cctvType:cfg.type,
+    minX:BBOX.minX,maxX:BBOX.maxX,minY:BBOX.minY,maxY:BBOX.maxY,getType:'json'});
+  let txt='';
+  try{
+    const r = await fetch(`${base}/cctvInfo?${p}`);
+    txt = await r.text();
+    const j = JSON.parse(txt);
+    let d = j?.response?.data ?? j?.data ?? [];
+    if(!Array.isArray(d)) d=[d];
+    all = d.filter(o=>o&&o.cctvurl).map(o=>({
+      name:(o.cctvname||'이름없음').trim(), url:o.cctvurl,
+      x:+o.coordx, y:+o.coordy, fmt:(o.cctvformat||'')
+    }));
+    all.forEach(o=>o.dist=Math.hypot((o.x-HOME.x)*88,(o.y-HOME.y)*111)); // km 근사
+    all.sort((a,b)=>a.dist-b.dist);
+    store.set(ck,{t:Date.now(),d:all});
+    render();
+    status(`${all.length}개 · 방금 받음`);
+  }catch(e){
+    status('불러오기 실패: '+(e.message||e)+(txt?'\n응답: '+txt.slice(0,300):'\n(브라우저가 막았다면 중계 서버가 필요합니다)'), true);
+  }
+}
+
+function render(){
+  $('tabFav').className = tab==='fav'?'on':''; $('tabAll').className = tab==='all'?'on':'';
+  const q = $('q').value.trim();
+  view = all.filter(o=>(tab==='all'||favs.has(o.name))
+    && (chip==='전체'||o.name.includes(chip)) && (!q||o.name.includes(q)));
+  const ul=$('list'); ul.innerHTML='';
+  if(tab==='fav' && !view.length && all.length){
+    ul.innerHTML='<li><span class="nm d">즐겨찾기가 없습니다. "전체 구간"에서 ☆를 눌러 추가하세요.</span></li>';
+  }
+  view.forEach((o,i)=>{
+    const li=document.createElement('li');
+    li.innerHTML=`<div class="nm">${esc(o.name)}<div class="d">일산에서 약 ${o.dist.toFixed(0)}km</div></div>`;
+    const st=document.createElement('button'); st.className='st'+(favs.has(o.name)?' f':'');
+    st.textContent=favs.has(o.name)?'★':'☆';
+    st.onclick=e=>{e.stopPropagation(); favs.has(o.name)?favs.delete(o.name):favs.add(o.name); store.set('favs',[...favs]); render();};
+    li.appendChild(st);
+    li.onclick=()=>play(i);
+    ul.appendChild(li);
+  });
+}
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function play(i){
+  if(i<0||i>=view.length) return;
+  cur=i; const o=view[i], v=$('vid'), img=$('pImg');
+  $('pTitle').textContent=o.name; $('pMsg').textContent=''; $('player').classList.add('show');
+  stop();
+  const isImg = /jpe?g|png/i.test(o.fmt) || /\.(jpe?g|png)(\?|$)/i.test(o.url);
+  if(isImg){ v.style.display='none'; img.style.display='block'; img.src=o.url; return; }
+  img.style.display='none'; v.style.display='block';
+  if(v.canPlayType('application/vnd.apple.mpegurl')){ v.src=o.url; }
+  else if(window.Hls && Hls.isSupported()){
+    hls=new Hls(); hls.loadSource(o.url); hls.attachMedia(v);
+    hls.on(Hls.Events.ERROR,(e,d)=>{ if(d.fatal) $('pMsg').textContent='영상 재생 실패 — ⟳로 목록을 새로 받아 보세요 (주소가 만료됐을 수 있음).'; });
+  } else { v.src=o.url; }
+  v.play().catch(()=>{});
+}
+function stop(){ const v=$('vid'); if(hls){hls.destroy();hls=null;} v.pause(); v.removeAttribute('src'); v.load(); }
+
+function openSettings(){ $('sKey').value=cfg.key; $('sType').value=cfg.type; $('sRoad').value=cfg.road; $('sProxy').value=cfg.proxy; $('settings').classList.add('show'); }
+
+// ===== 이벤트 =====
+CHIPS.forEach(c=>{ const b=document.createElement('button'); b.textContent=c; b.onclick=()=>{chip=c;[...$('chips').children].forEach(x=>x.className=x.textContent===c?'on':''); render();}; if(c===chip)b.className='on'; $('chips').appendChild(b); });
+$('tabFav').onclick=()=>{tab='fav';render()};
+$('tabAll').onclick=()=>{tab='all';render()};
+$('q').oninput=render;
+$('btnRefresh').onclick=()=>load(true);
+$('btnSet').onclick=openSettings;
+$('sClose').onclick=()=>$('settings').classList.remove('show');
+$('sSave').onclick=()=>{ cfg={key:$('sKey').value.trim(),type:$('sType').value,road:$('sRoad').value,proxy:$('sProxy').value.trim()}; store.set('cfg',cfg); $('settings').classList.remove('show'); load(true); };
+$('pClose').onclick=()=>{stop();$('player').classList.remove('show')};
+$('pPrev').onclick=()=>play(cur-1);
+$('pNext').onclick=()=>play(cur+1);
+
+load(false);
+</script>
+</body>
+</html>
