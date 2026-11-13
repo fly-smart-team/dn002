@@ -10,69 +10,62 @@
 <title>공항 가는 길 CCTV</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <style>
-  :root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#e2e8f0;--sub:#94a3b8;--acc:#38bdf8;--g:#22c55e;--y:#eab308;--r:#ef4444;--err:#f87171}
+  :root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#e2e8f0;--sub:#94a3b8;--acc:#38bdf8;--g:#22c55e;--y:#eab308;--r:#ef4444;--n:#475569;--err:#f87171}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;padding-bottom:calc(16px + env(safe-area-inset-bottom))}
-  header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 12px 8px;border-bottom:1px solid var(--line)}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;padding-bottom:calc(20px + env(safe-area-inset-bottom))}
+  header{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(8px + env(safe-area-inset-top)) 10px 8px;border-bottom:1px solid var(--line)}
   .row{display:flex;align-items:center;gap:8px}
-  h1{font-size:17px;margin:0;flex:1}
-  button{font:inherit;color:var(--txt);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 11px}
+  h1{font-size:16px;margin:0;flex:1}
+  #eta{font-size:13px;color:var(--sub);margin-top:4px}
+  #eta b{font-size:20px;color:var(--txt);margin-right:6px}
+  button{font:inherit;color:var(--txt);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
   button.on{background:var(--acc);color:#0f172a;border-color:var(--acc);font-weight:700}
   input,select{font:inherit;width:100%;background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
-  #status{font-size:12px;color:var(--sub);padding:6px 12px}
+  #status{font-size:12px;color:var(--sub);padding:6px 10px}
   #status.err{color:var(--err);white-space:pre-wrap;word-break:break-all}
-  section{padding:0 10px}
-  h2{font-size:14px;color:var(--sub);margin:12px 2px 6px;font-weight:600}
-  /* 속도 */
-  .road{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
-  .road .t{display:flex;justify-content:space-between;font-size:14px}
-  .road .t b{font-size:16px}
-  .bar{display:flex;gap:2px;margin-top:8px;height:12px}
-  .bar span{flex:1;border-radius:2px}
-  .road .s{font-size:11px;color:var(--sub);margin-top:5px}
-  .legend{font-size:11px;color:var(--sub);margin:2px 2px 0}
-  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 8px;vertical-align:-1px}
-  /* CCTV 그리드 */
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-  .grid.one{grid-template-columns:1fr}
-  .tile{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:16/10;border:1px solid var(--line)}
+  #route{padding:0 8px}
+  .node,.seg{display:grid;grid-template-columns:36% 1fr;column-gap:8px}
+  .node .l{display:flex;align-items:center;gap:6px;font-weight:700;font-size:13px;padding:2px 0}
+  .node .dot{width:14px;height:14px;border-radius:50%;background:var(--bg);border:3px solid var(--txt);margin-left:1px;flex:none}
+  .node.end .dot{background:var(--acc);border-color:var(--acc)}
+  .seg .l{display:flex;gap:8px;min-height:64px}
+  .seg .rail{width:10px;border-radius:5px;margin-left:3px;flex:none}
+  .seg .info{display:flex;flex-direction:column;justify-content:center;font-size:11px;color:var(--sub);gap:2px;padding:6px 0}
+  .seg .info .sp{font-size:18px;font-weight:800}
+  .seg .info .sp small{font-size:11px;font-weight:600;margin-left:2px}
+  .seg .r{display:flex;flex-direction:column;gap:6px;padding:6px 0}
+  .none{font-size:11px;color:var(--n);padding:4px 0}
+  .tile{position:relative;background:#000;border-radius:9px;overflow:hidden;aspect-ratio:16/10;border:1px solid var(--line)}
   .tile video,.tile img{width:100%;height:100%;object-fit:cover;display:block}
-  .tile .cap{position:absolute;left:0;right:0;bottom:0;padding:14px 6px 4px;font-size:11px;background:linear-gradient(transparent,rgba(0,0,0,.85));display:flex;gap:4px;align-items:flex-end}
+  .tile .cap{position:absolute;left:0;right:0;bottom:0;padding:12px 6px 3px;font-size:11px;background:linear-gradient(transparent,rgba(0,0,0,.85));display:flex;gap:4px;align-items:flex-end}
   .tile .cap .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tile .no{position:absolute;top:4px;left:5px;font-size:10px;background:rgba(0,0,0,.6);padding:1px 5px;border-radius:6px;color:var(--sub)}
-  .spd{font-weight:700;padding:1px 6px;border-radius:6px;color:#0f172a;font-size:11px;white-space:nowrap}
-  /* 전체화면 */
+  .spd{font-weight:800;padding:0 5px;border-radius:5px;color:#0f172a;font-size:11px}
+  .legend{font-size:11px;color:var(--sub);padding:10px}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 8px;vertical-align:-1px}
   #player,#settings{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:10;display:none;flex-direction:column;padding:calc(12px + env(safe-area-inset-top)) 12px 12px}
   #player.show,#settings.show{display:flex}
-  #pTitle{flex:1;font-weight:700}
+  #pTitle{flex:1;font-weight:700;font-size:14px}
   #vid,#pImg{width:100%;max-height:70vh;background:#000;border-radius:10px;margin-top:10px}
   #pImg{display:none;object-fit:contain}
   .nav{margin-top:10px}.nav button{flex:1}
   #settings .box{background:var(--card);border-radius:14px;padding:16px;margin-top:16px;overflow:auto}
   #settings label{display:block;font-size:13px;color:var(--sub);margin:12px 0 4px}
   .hint{font-size:12px;color:var(--sub);margin-top:6px;line-height:1.5}
+  #dbg{font-size:11px;color:var(--sub);white-space:pre-wrap;word-break:break-all;margin-top:8px;max-height:30vh;overflow:auto}
 </style>
 </head>
 <body>
 <header>
   <div class="row">
-    <h1>✈️ 일산 → 인천공항 T2</h1>
-    <button id="btnCols" title="한 줄/두 줄">▦</button>
+    <h1>✈️ 이산포IC → 인천공항 T2</h1>
     <button id="btnRefresh" title="새로고침">⟳</button>
     <button id="btnSet" title="설정">⚙︎</button>
   </div>
+  <div id="eta">계산 중…</div>
 </header>
 <div id="status">불러오는 중…</div>
-
-<section>
-  <h2>구간별 속도</h2>
-  <div id="roads"><div class="road"><div class="s">속도 정보 대기 중…</div></div></div>
-  <div class="legend">
-    <i style="background:var(--g)"></i>원활 70+ <i style="background:var(--y)"></i>서행 30–70 <i style="background:var(--r)"></i>정체 30 미만 (km/h)
-  </div>
-  <h2 id="camTitle">CCTV</h2>
-  <div class="grid" id="grid"></div>
-</section>
+<div id="route"></div>
+<div class="legend"><i style="background:var(--g)"></i>원활 70+ <i style="background:var(--y)"></i>서행 30–70 <i style="background:var(--r)"></i>정체 30↓ <i style="background:var(--n)"></i>정보 없음 (km/h, 공항 방향)</div>
 
 <div id="player">
   <div class="row"><div id="pTitle"></div><button id="pClose">닫기</button></div>
@@ -93,65 +86,65 @@
       <option value="1">실시간 HLS (HTTP)</option>
       <option value="3">정지영상</option>
     </select>
-    <label>경로 폭 (경로에서 이 거리 안의 CCTV만 표시)</label>
+    <label>경로 폭 (경로에서 이 거리 안의 CCTV만)</label>
     <select id="sBuf">
-      <option value="0.7">0.7 km — 도로 위만</option>
-      <option value="1.2">1.2 km — 기본</option>
-      <option value="2.5">2.5 km — 넓게</option>
-      <option value="0">경로 필터 끄기 (주변 전체)</option>
+      <option value="0.5">0.5 km — 도로 위만</option>
+      <option value="1.0">1.0 km — 기본</option>
+      <option value="2.0">2.0 km — 넓게</option>
     </select>
     <label>중계 서버 주소 (선택)</label>
     <input id="sProxy" placeholder="비워두면 ITS 서버 직접 호출">
-    <div class="hint">경로(티맵 추천): 일산 경의로·호수로 → 킨텍스IC → 자유로 → 자유로JC → 수도권제1순환(김포대교) → 노오지JC → 인천공항고속도로(북인천·청라·영종대교) → 공항입구JC → 영종해안북로 → 제2여객터미널.<br>CCTV는 화면에 보이는 것만 재생해서 데이터와 배터리를 아낍니다. 영상을 누르면 크게 봅니다.<br>호출 절약: CCTV 목록 10분, 속도 3분 동안 저장해 둡니다.</div>
+    <div class="hint">경로: 이산포JC → 킨텍스IC → 장항IC → 자유로JC → 김포대교 → 김포IC → 노오지JC → 청라IC → 북인천IC → 영종대교 → 금산IC → 공항입구JC → 영종해안북로 → 제2여객터미널.<br>CCTV는 화면에 보이는 것만 재생합니다. 영상을 누르면 크게 봅니다.<br>호출 절약: CCTV 10분, 속도 3분 저장.</div>
     <div class="row" style="margin-top:14px"><button id="sSave" class="on" style="flex:1">저장</button></div>
+    <label>진단 정보 (문제 생기면 캡처해서 보내주세요)</label>
+    <div id="dbg">-</div>
   </div>
 </div>
 
 <script>
-// ===== 경로 (경도, 위도) — 티맵 추천경로: 일산 → 인천공항 T2 =====
-const ROUTE = [
-  [126.760,37.680], // 출발 (일산서구 하이파크로·경의로)
-  [126.743,37.676], // 고양체육관 사거리
-  [126.752,37.670], // 호수로·문촌19단지 사거리
-  [126.738,37.657], // 킨텍스IC (자유로 진입)
-  [126.770,37.642], // 자유로 (장항IC 부근)
-  [126.797,37.627], // 자유로JC
-  [126.798,37.608], // 김포대교
-  [126.771,37.590], // 노오지JC (인천공항고속도로 진입)
-  [126.735,37.578], // 김포공항 북측
-  [126.688,37.561], // 북인천IC
-  [126.640,37.547], // 청라IC
-  [126.607,37.548], // 영종대교 동단
-  [126.555,37.540], // 영종대교 서단
-  [126.525,37.528], // 공항입구JC (진출)
-  [126.490,37.515], // 영종해안북로
-  [126.455,37.500], // 영종해안북로 (서측)
-  [126.440,37.482], // 제2터미널대로
-  [126.434,37.467]  // 인천공항 제2여객터미널
+// ===== 경로 노드 (이름, 경도, 위도, 다음 구간 도로) — 공항 방향 순서 =====
+const NODES = [
+  ['이산포JC',    126.720,37.660,'자유로'],
+  ['킨텍스IC',    126.738,37.657,'자유로'],
+  ['장항IC',      126.770,37.645,'자유로'],
+  ['자유로JC',    126.796,37.622,'제1순환'],
+  ['김포대교',    126.799,37.610,'제1순환'],
+  ['김포IC',      126.786,37.598,'제1순환'],
+  ['노오지JC',    126.771,37.588,'공항고속도로'],
+  ['청라IC',      126.664,37.566,'공항고속도로'],
+  ['북인천IC',    126.620,37.553,'공항고속도로'],
+  ['영종대교',    126.560,37.545,'공항고속도로'],
+  ['금산IC',      126.535,37.535,'공항고속도로'],
+  ['공항입구JC',  126.522,37.527,'영종해안북로'],
+  ['영종해안북로',126.475,37.506,'제2터미널대로'],
+  ['인천공항 T2', 126.434,37.467,'']
 ];
-const ROAD_ORDER = [/자유로|77호/, /제1순환|외곽순환/, /공항/, /영종|해안북로|터미널/]; // 경로 순서
-const BBOX = {minX:126.41, maxX:126.82, minY:37.44, maxY:37.70};
+const SHAPE = {11:[[126.495,37.516]], 12:[[126.452,37.494],[126.440,37.480]]};
+const ROUTE_ROADS = /자유로|77호|제1순환|외곽순환|순환고속|인천국제공항|공항고속|신공항|영종해안북로|해안북로|제2터미널|공항대로/;
+const BBOX = {minX:126.41, maxX:126.83, minY:37.45, maxY:37.70};
 const BASE = 'https://openapi.its.go.kr:9443';
 const CCTV_MS = 10*60*1000, TRAF_MS = 3*60*1000;
 
-// ===== 공통 =====
 const $ = id => document.getElementById(id);
 const store = {
   get:(k,d)=>{try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v)}catch(e){return d}},
   set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
 };
-let cfg = Object.assign({key:'',type:'4',buf:'1.2',proxy:'',one:false}, store.get('cfg',{}));
-let cams=[], speedByLink={}, cur=-1, popHls=null;
-const tiles = new Map(); // element -> {cam, hls}
+let cfg = Object.assign({key:'',type:'4',buf:'1.0',proxy:''}, store.get('cfg',{}));
+if(!['0.5','1.0','2.0'].includes(cfg.buf)) cfg.buf='1.0';
+let cams=[], linkSpeed={}, cur=-1, popHls=null, dbg={};
+const tiles = new Map();
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function status(m,e){const s=$('status');s.textContent=m;s.className=e?'err':''}
-const colorOf = v => v>=70?'var(--g)':v>=30?'var(--y)':'var(--r)';
+const colorOf = v => !(v>0)?'var(--n)':v>=70?'var(--g)':v>=30?'var(--y)':'var(--r)';
+const avg=a=>a.reduce((s,v)=>s+v,0)/a.length;
 
-// 위경도 → km 평면 (기준: 경로 시작점)
-const K = {x:88.2, y:111.0}, O = ROUTE[0];
-const toKm = (lon,lat)=>[(lon-O[0])*K.x,(lat-O[1])*K.y];
-const SEG = (()=>{let cum=0;const out=[];for(let i=0;i<ROUTE.length-1;i++){const a=toKm(...ROUTE[i]),b=toKm(...ROUTE[i+1]);const len=Math.hypot(b[0]-a[0],b[1]-a[1]);out.push({a,b,len,cum});cum+=len}return out})();
-function project(lon,lat){ // 경로까지 거리, 일산에서부터 경로상 거리
+// ===== 경로 기하 =====
+const ROUTE=[]; NODES.forEach((n,i)=>{ROUTE.push([n[1],n[2]]); (SHAPE[i]||[]).forEach(p=>ROUTE.push(p));});
+const O=ROUTE[0], toKm=(lon,lat)=>[(lon-O[0])*88.2,(lat-O[1])*111.0];
+const SEG=(()=>{let cum=0;const out=[];for(let i=0;i<ROUTE.length-1;i++){const a=toKm(...ROUTE[i]),b=toKm(...ROUTE[i+1]);const len=Math.hypot(b[0]-a[0],b[1]-a[1]);out.push({a,b,len,cum});cum+=len}return out})();
+const TOTAL=SEG.reduce((s,x)=>s+x.len,0);
+function project(lon,lat){
   const p=toKm(lon,lat); let best={d:1e9,along:0};
   for(const s of SEG){const dx=s.b[0]-s.a[0],dy=s.b[1]-s.a[1];
     let t=((p[0]-s.a[0])*dx+(p[1]-s.a[1])*dy)/(s.len*s.len); t=Math.max(0,Math.min(1,t));
@@ -159,7 +152,10 @@ function project(lon,lat){ // 경로까지 거리, 일산에서부터 경로상 
     if(d<best.d) best={d,along:s.cum+t*s.len};}
   return best;
 }
+const NODE_AL = NODES.map(n=>project(n[1],n[2]).along);
+const segOf = al => { for(let i=NODES.length-2;i>=0;i--) if(al>=NODE_AL[i]) return i; return 0; };
 
+// ===== API =====
 async function api(path, params){
   const base=(cfg.proxy||BASE).replace(/\/$/,'');
   const p=new URLSearchParams(Object.assign({apiKey:cfg.key,getType:'json',
@@ -171,76 +167,107 @@ async function api(path, params){
   return d.filter(Boolean);
 }
 
-// ===== CCTV =====
 async function loadCams(force){
-  const ck='cctv_'+cfg.type, c=store.get(ck,null);
-  let raw;
+  const ck='cctv_'+cfg.type, c=store.get(ck,null); let raw;
   if(!force && c && Date.now()-c.t<CCTV_MS) raw=c.d;
   else{ raw=(await api('cctvInfo',{type:'all',cctvType:cfg.type})).filter(o=>o.cctvurl)
           .map(o=>({name:(o.cctvname||'').trim(),url:o.cctvurl,x:+o.coordx,y:+o.coordy,fmt:o.cctvformat||'',link:String(o.roadsectionid||'')}));
         store.set(ck,{t:Date.now(),d:raw}); }
-  const buf=+cfg.buf;
-  const seen=new Set();
+  const buf=+cfg.buf, seen=new Set();
   cams = raw.map(o=>Object.assign({},o,project(o.x,o.y)))
-            .filter(o=>(buf===0||o.d<=buf) && !seen.has(o.name) && seen.add(o.name))
-            .sort((a,b)=>a.along-b.along);
+    .filter(o=>o.d<=buf && !seen.has(o.name) && seen.add(o.name))
+    .sort((a,b)=>a.along-b.along);
+  cams.forEach(c=>c.seg=segOf(c.along));
+  dbg.camsAll=raw.length; dbg.camsRoute=cams.length;
 }
 
-// ===== 소통(속도) =====
 async function loadTraffic(force){
-  const c=store.get('traffic',null);
-  let raw;
+  const c=store.get('traffic',null); let raw;
   if(!force && c && Date.now()-c.t<TRAF_MS) raw=c.d;
   else{ raw=(await api('trafficInfo',{type:'all',drcType:'all'})).map(o=>({
-          road:(o.roadName||'').trim(), drc:String(o.roadDrcType||''), no:+o.linkNo||0,
-          link:String(o.linkId||''), spd:+o.speed}));
+          road:(o.roadName||'').trim(), link:String(o.linkId||''), s:String(o.startNodeId||''), e:String(o.endNodeId||''),
+          spd:+o.speed}));
         store.set('traffic',{t:Date.now(),d:raw}); }
-  speedByLink={}; raw.forEach(o=>{ if(o.link) speedByLink[o.link]=o.spd; });
   return raw;
 }
-function renderRoads(raw){
-  const want=ROAD_ORDER;
-  const ord=r=>{const i=ROAD_ORDER.findIndex(x=>x.test(r));return i<0?9:i};
-  const groups={};
-  raw.filter(o=>o.spd>0 && want.some(r=>r.test(o.road))).forEach(o=>{
-    const k=o.road+'|'+o.drc; (groups[k]=groups[k]||[]).push(o);
+
+// ===== 공항 방향 구간 속도 =====
+// 경로 도로 링크를 노드로 이어 체인 구성 → CCTV 위치로 체인을 경로에 고정
+// → 경로 거리가 증가하는 체인만(=공항 방향) 사용 → 링크를 구간에 배분해 평균
+function segmentSpeeds(traffic){
+  const all={}; traffic.forEach(t=>{ if(t.link) all[t.link]=t; });
+  const links=traffic.filter(t=>t.link&&ROUTE_ROADS.test(t.road)&&t.s&&t.e);
+  const byStart=new Map(); links.forEach(l=>{ if(!byStart.has(l.s)) byStart.set(l.s,[]); byStart.get(l.s).push(l); });
+  const ends=new Set(links.map(l=>l.e)), used=new Set(), chains=[];
+  const walk=h=>{const c=[];let x=h;while(x&&!used.has(x.link)){used.add(x.link);c.push(x);
+    const nx=(byStart.get(x.e)||[]).filter(n=>!used.has(n.link)&&n.e!==x.s); x=nx.find(n=>n.road===x.road)||nx[0];}return c};
+  links.filter(l=>!ends.has(l.s)).forEach(h=>{const c=walk(h);if(c.length)chains.push(c)});
+  links.forEach(l=>{if(!used.has(l.link)){const c=walk(l);if(c.length)chains.push(c)}});
+
+  const camAl={}; cams.forEach(c=>{ if(c.link) (camAl[c.link]=camAl[c.link]||[]).push(c.along); });
+  const segVals=NODES.map(()=>[]); linkSpeed={};
+  let fwd=0;
+  chains.forEach(ch=>{
+    const anc=[]; ch.forEach((l,i)=>{ if(camAl[l.link]) anc.push([i,avg(camAl[l.link])]); });
+    if(anc.length<2) return;
+    const [i0,a0]=anc[0], [i1,a1]=anc[anc.length-1];
+    if(!(a1>a0 && i1>i0)) return;
+    fwd++;
+    const k=(a1-a0)/(i1-i0);
+    ch.forEach((l,i)=>{
+      let al;
+      if(i<=i0) al=a0-(i0-i)*k; else if(i>=i1) al=a1+(i-i1)*k;
+      else { let j=0; while(anc[j+1][0]<i) j++; const p=anc[j],q=anc[j+1]; al=p[1]+(q[1]-p[1])*(i-p[0])/(q[0]-p[0]); }
+      if(al<NODE_AL[0]-0.3||al>TOTAL+0.3) return;
+      if(l.spd>0){ segVals[segOf(al)].push(l.spd); linkSpeed[l.link]=l.spd; }
+    });
   });
-  const keys=Object.keys(groups).sort((a,b)=>ord(a)-ord(b)||a.localeCompare(b));
-  if(!keys.length){ $('roads').innerHTML='<div class="road"><div class="s">경로 도로의 속도 정보를 찾지 못했습니다.</div></div>'; return; }
-  $('roads').innerHTML = keys.map(k=>{
-    const [road,drc]=k.split('|'); const L=groups[k].sort((a,b)=>a.no-b.no);
-    const avg=L.reduce((s,o)=>s+o.spd,0)/L.length, min=Math.min(...L.map(o=>o.spd));
-    const slow=L.filter(o=>o.spd<30).length;
-    return `<div class="road"><div class="t"><span>${esc(road)} <span style="color:var(--sub);font-size:12px">${esc(drcLabel(road,drc))}</span></span>
-      <b style="color:${colorOf(avg)}">${avg.toFixed(0)} km/h</b></div>
-      <div class="bar">${L.map(o=>`<span style="background:${colorOf(o.spd)}" title="${o.spd}"></span>`).join('')}</div>
-      <div class="s">구간 ${L.length}개 · 최저 ${min} km/h${slow?` · 정체 ${slow}구간`:''}</div></div>`;
-  }).join('');
-}
-function drcLabel(road,d){ // ITS: 1=기점→종점(상행), 2=종점→기점(하행) — 확인 후 조정
-  return d==='1'?'(기점→종점 방향)':d==='2'?'(종점→기점 방향)':d?`(방향 ${d})`:'';
+  const res=NODES.map((n,i)=>{
+    if(segVals[i].length) return {v:avg(segVals[i]),src:'link'};
+    const cv=cams.filter(c=>c.seg===i&&all[c.link]&&all[c.link].spd>0).map(c=>all[c.link].spd);
+    return cv.length?{v:avg(cv),src:'cam'}:{v:0,src:''};
+  });
+  dbg.links=traffic.length; dbg.routeLinks=links.length; dbg.chains=chains.length; dbg.fwdChains=fwd;
+  dbg.camLinkMatch=cams.filter(c=>all[c.link]).length;
+  dbg.camNames=cams.map(c=>`${NODES[c.seg][0]}|${c.name}|${c.d.toFixed(2)}`).join('\n');
+  dbg.roads=[...new Set(traffic.map(t=>t.road))].slice(0,40).join(', ');
+  return res;
 }
 
-// ===== 그리드 =====
-const io = new IntersectionObserver(es=>es.forEach(e=>{
-  const t=tiles.get(e.target); if(!t) return;
-  e.isIntersecting ? startTile(e.target,t) : stopTile(t);
-}),{rootMargin:'100px'});
+// ===== 렌더 =====
+const io=new IntersectionObserver(es=>es.forEach(e=>{const t=tiles.get(e.target); if(t) e.isIntersecting?startTile(e.target,t):stopTile(t);}),{rootMargin:'120px'});
 
-function renderGrid(){
+function render(sp){
   tiles.forEach((t,el)=>{stopTile(t);io.unobserve(el)}); tiles.clear();
-  const g=$('grid'); g.innerHTML=''; g.className='grid'+(cfg.one?' one':'');
-  $('camTitle').textContent=`CCTV ${cams.length}개 · 일산에서 가까운 순`;
-  if(!cams.length){ g.innerHTML='<div class="hint">경로 위 CCTV를 찾지 못했습니다. ⚙︎에서 경로 폭을 넓혀 보세요.</div>'; return; }
-  cams.forEach((c,i)=>{
-    const el=document.createElement('div'); el.className='tile';
-    const spd=speedByLink[c.link];
-    el.innerHTML=`<div class="no">${i+1} · ${c.along.toFixed(0)}km</div>
-      <div class="cap"><span class="n">${esc(c.name)}</span>${spd>0?`<span class="spd" style="background:${colorOf(spd)}">${spd}</span>`:''}</div>`;
-    el.onclick=()=>openPlayer(i);
-    g.appendChild(el); tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
+  const R=$('route'); R.innerHTML='';
+  let mins=0, known=0;
+  NODES.forEach((n,i)=>{
+    const nd=document.createElement('div'); nd.className='node'+(i===NODES.length-1?' end':'');
+    nd.innerHTML=`<div class="l"><span class="dot"></span>${esc(n[0])}</div><div></div>`; R.appendChild(nd);
+    if(i===NODES.length-1) return;
+    const len=NODE_AL[i+1]-NODE_AL[i], s=sp[i];
+    if(s.v>0){ mins+=len/s.v*60; known+=len; }
+    const sg=document.createElement('div'); sg.className='seg';
+    sg.innerHTML=`<div class="l"><div class="rail" style="background:${colorOf(s.v)}"></div>
+      <div class="info"><span class="sp" style="color:${colorOf(s.v)}">${s.v>0?s.v.toFixed(0):'—'}<small>${s.v>0?'km/h':''}</small></span>
+      <span>${esc(n[3])} · ${len.toFixed(1)}km${s.src==='cam'?' · 참고':''}</span></div></div>`;
+    const right=document.createElement('div'); right.className='r';
+    const list=cams.filter(c=>c.seg===i);
+    if(!list.length) right.innerHTML='<div class="none">CCTV 없음</div>';
+    list.forEach(c=>{
+      const el=document.createElement('div'); el.className='tile';
+      const v=linkSpeed[c.link];
+      el.innerHTML=`<div class="cap"><span class="n">${esc(c.name)}</span>${v>0?`<span class="spd" style="background:${colorOf(v)}">${v}</span>`:''}</div>`;
+      el.onclick=()=>openPlayer(cams.indexOf(c));
+      right.appendChild(el); tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
+    });
+    sg.appendChild(right); R.appendChild(sg);
   });
+  const totalLen=NODE_AL[NODE_AL.length-1]-NODE_AL[0];
+  if(known>0){ const est=mins*totalLen/known; $('eta').innerHTML=`<b>약 ${Math.round(est)}분</b>${totalLen.toFixed(0)}km · CCTV ${cams.length}개${known<totalLen*0.9?' · 일부 구간 정보 없음':''}`; }
+  else $('eta').textContent=`${totalLen.toFixed(0)}km · CCTV ${cams.length}개 · 속도 정보 없음`;
 }
+
 const isImg=c=>/jpe?g|png/i.test(c.fmt)||/\.(jpe?g|png)(\?|$)/i.test(c.url);
 function attach(v,url,onErr){
   if(v.canPlayType('application/vnd.apple.mpegurl')){ v.src=url; return null; }
@@ -264,42 +291,39 @@ function stopTile(t){
 // ===== 크게 보기 =====
 function openPlayer(i){
   if(i<0||i>=cams.length) return; cur=i; const c=cams[i], v=$('vid'), im=$('pImg');
-  tiles.forEach(stopTile); // 크게 볼 때 작은 화면은 잠시 멈춤
-  const spd=speedByLink[c.link];
-  $('pTitle').textContent=`${i+1}. ${c.name}${spd>0?` · ${spd} km/h`:''}`; $('pMsg').textContent='';
+  tiles.forEach(stopTile);
+  const s=linkSpeed[c.link];
+  $('pTitle').textContent=`${NODES[c.seg][0]}→${NODES[c.seg+1][0]} · ${c.name}${s>0?` · ${s}km/h`:''}`; $('pMsg').textContent='';
   $('player').classList.add('show'); stopPop();
   if(isImg(c)){ v.style.display='none'; im.style.display='block'; im.src=c.url; return; }
   im.style.display='none'; v.style.display='block';
   popHls=attach(v,c.url,()=>{$('pMsg').textContent='영상 재생 실패 — ⟳로 새로 받아 보세요.'}); v.play().catch(()=>{});
 }
 function stopPop(){const v=$('vid'); if(popHls){popHls.destroy();popHls=null} v.pause(); v.removeAttribute('src'); v.load();}
-function closePlayer(){ stopPop(); $('player').classList.remove('show'); tiles.forEach((t,el)=>{const r=el.getBoundingClientRect(); if(r.bottom>-100&&r.top<innerHeight+100) startTile(el,t)}); }
+function closePlayer(){ stopPop(); $('player').classList.remove('show');
+  tiles.forEach((t,el)=>{const r=el.getBoundingClientRect(); if(r.bottom>-120&&r.top<innerHeight+120) startTile(el,t)}); }
 
 // ===== 실행 =====
 async function load(force){
   if(!cfg.key){ status('⚙︎ 설정에서 인증키를 먼저 입력하세요.',true); openSettings(); return; }
-  status('불러오는 중…');
-  const errs=[];
-  let traffic=[];
-  await Promise.all([
-    loadCams(force).catch(e=>errs.push('CCTV: '+e.message)),
-    loadTraffic(force).then(r=>traffic=r).catch(e=>errs.push('속도: '+e.message))
-  ]);
-  renderRoads(traffic); renderGrid();
+  status('불러오는 중…'); const errs=[]; let traffic=[];
+  await loadCams(force).catch(e=>errs.push('CCTV: '+e.message));
+  await loadTraffic(force).then(r=>traffic=r).catch(e=>errs.push('속도: '+e.message));
+  render(segmentSpeeds(traffic));
   const now=new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
-  errs.length ? status(errs.join('\n'),true) : status(`${now} 기준 · CCTV ${cams.length}개`);
+  errs.length?status(errs.join('\n'),true):status(`${now} 기준`);
+  $('dbg').textContent=JSON.stringify(dbg,null,1);
 }
 function openSettings(){ $('sKey').value=cfg.key; $('sType').value=cfg.type; $('sBuf').value=cfg.buf; $('sProxy').value=cfg.proxy; $('settings').classList.add('show'); }
 
 $('btnRefresh').onclick=()=>load(true);
 $('btnSet').onclick=openSettings;
-$('btnCols').onclick=()=>{cfg.one=!cfg.one; store.set('cfg',cfg); $('grid').className='grid'+(cfg.one?' one':'')};
 $('sClose').onclick=()=>$('settings').classList.remove('show');
 $('sSave').onclick=()=>{ Object.assign(cfg,{key:$('sKey').value.trim(),type:$('sType').value,buf:$('sBuf').value,proxy:$('sProxy').value.trim()}); store.set('cfg',cfg); $('settings').classList.remove('show'); load(true); };
 $('pClose').onclick=closePlayer;
 $('pPrev').onclick=()=>openPlayer(cur-1);
 $('pNext').onclick=()=>openPlayer(cur+1);
-document.addEventListener('visibilitychange',()=>{ if(document.hidden) tiles.forEach(stopTile); });
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) tiles.forEach(stopTile); else load(false); });
 
 load(false);
 </script>
