@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-title" content="공항CCTV">
 <meta name="theme-color" content="#0f172a">
 <title>공항 가는 길 CCTV</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <style>
   :root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#e2e8f0;--sub:#94a3b8;--acc:#38bdf8;--g:#22c55e;--y:#eab308;--r:#ef4444;--n:#475569;--err:#f87171}
@@ -96,6 +99,7 @@
 <header>
   <div class="row">
     <h1>✈️ 이산포IC → T2</h1>
+    <button id="btnInstall" title="앱 설치" style="display:none">⬇︎</button>
     <button id="btnView" title="한 화면/목록 전환">▤</button>
     <button id="btnMode" title="영상/정지화면 전환">🎥</button>
     <button id="btnRefresh" title="새로고침">⟳</button>
@@ -495,6 +499,32 @@ $('pNext').onclick=()=>openPlayer(cur+1);
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) tiles.forEach(stopTile); else load(false); });
 
 load(false);
+</script>
+<div id="installTip" style="display:none;position:fixed;left:10px;right:10px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:20;background:#1e293b;border:1px solid #38bdf8;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5">
+  <b>홈 화면에 앱으로 설치</b><br><span id="installMsg"></span>
+  <div style="text-align:right;margin-top:6px"><button id="installClose">닫기</button></div>
+</div>
+<script>
+// ===== 웹 설치 (PWA) =====
+if('serviceWorker' in navigator) addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+(function(){
+  const btn=document.getElementById('btnInstall'), tip=document.getElementById('installTip'), msg=document.getElementById('installMsg');
+  const standalone=matchMedia('(display-mode: standalone)').matches||navigator.standalone;
+  if(standalone) return; // 이미 설치된 앱으로 실행 중
+  const ua=navigator.userAgent, ios=/iPhone|iPad|iPod/.test(ua);
+  let deferred=null;
+  addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); deferred=e; btn.style.display=''; });
+  addEventListener('appinstalled',()=>{ btn.style.display='none'; tip.style.display='none'; deferred=null; });
+  btn.style.display=''; // 설치 안내는 항상 볼 수 있게
+  btn.onclick=async()=>{
+    if(deferred){ deferred.prompt(); const r=await deferred.userChoice; deferred=null; if(r.outcome==='accepted') btn.style.display='none'; return; }
+    msg.innerHTML = ios
+      ? 'Safari 아래쪽 <b>공유 버튼(□↑)</b> → <b>홈 화면에 추가</b>를 누르세요.'
+      : '브라우저 메뉴 <b>⋮</b> → <b>앱 설치</b> 또는 <b>홈 화면에 추가</b>를 누르세요.<br><span style="color:#94a3b8">Brave는 설정에 따라 설치 창이 바로 뜨지 않을 수 있습니다.</span>';
+    tip.style.display='block';
+  };
+  document.getElementById('installClose').onclick=()=>tip.style.display='none';
+})();
 </script>
 </body>
 </html>
