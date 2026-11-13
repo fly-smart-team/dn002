@@ -223,34 +223,35 @@ async function loadTraffic(force){
   return per; // per[i] = 구간 i 영역의 링크들
 }
 
-// 공항 방향 판별: 링크를 노드로 이어 체인을 만들고, 체인을 따라 구간 번호가 커지면 공항 방향
+// 공항 방향 판별:
+// 1) 각 노드의 '구간 위치' = 그 노드에 닿는 링크들이 속한 구간 번호의 평균
+// 2) 끝 노드 위치 > 시작 노드 위치인 링크 = 공항 방향, 반대면 서울 방향
+// 3) 판단이 안 되는 링크(구간 안쪽)는 연결된 링크를 따라 방향을 전파
 function segmentSpeeds(per){
-  const L={}; // link -> {..., segs:Set}
+  const L={};
   per.forEach((arr,i)=>arr.forEach(o=>{ if(!o.link) return; (L[o.link]=L[o.link]||Object.assign({segs:new Set()},o)).segs.add(i); }));
   const all=Object.values(L);
   const roadLinks=all.filter(l=>ROUTE_ROADS.test(l.road)&&l.s&&l.e);
   const links=roadLinks.length?roadLinks:all.filter(l=>l.s&&l.e);
-  const byStart=new Map(); links.forEach(l=>{ if(!byStart.has(l.s)) byStart.set(l.s,[]); byStart.get(l.s).push(l); });
-  const ends=new Set(links.map(l=>l.e)), used=new Set(), chains=[];
-  const walk=h=>{const c=[];let x=h;while(x&&!used.has(x.link)){used.add(x.link);c.push(x);
-    const nx=(byStart.get(x.e)||[]).filter(n=>!used.has(n.link)&&n.e!==x.s); x=nx.find(n=>n.road===x.road)||nx[0];}return c};
-  links.filter(l=>!ends.has(l.s)).forEach(h=>{const c=walk(h);if(c.length)chains.push(c)});
-  links.forEach(l=>{if(!used.has(l.link)){const c=walk(l);if(c.length)chains.push(c)}});
-  const mid=l=>{const a=[...l.segs];return a.reduce((s,v)=>s+v,0)/a.length};
-  const segVals=NODES.map(()=>[]); linkSpeed={}; let fwd=0, fwdLinks=0;
-  chains.forEach(ch=>{
-    if(ch.length<2) return;
-    const first=mid(ch[0]), last=mid(ch[ch.length-1]);
-    if(!(last>first)) return; // 구간 번호가 증가해야 공항 방향
-    fwd++;
-    ch.forEach(l=>{ if(l.spd>0){ fwdLinks++; linkSpeed[l.link]=l.spd; l.segs.forEach(i=>segVals[i].push(l.spd)); } });
-  });
-  dbg.links=all.length; dbg.routeLinks=roadLinks.length; dbg.chains=chains.length; dbg.fwdChains=fwd; dbg.fwdLinks=fwdLinks;
-  dbg.perSeg=per.map(a=>a.length).join(',');
+  const npos={}; const addPos=(n,v)=>{(npos[n]=npos[n]||[]).push(v)};
+  links.forEach(l=>{ const m=avg([...l.segs]); addPos(l.s,m); addPos(l.e,m); });
+  const P=n=>avg(npos[n]);
+  const dir={}; // link -> +1 공항, -1 서울
+  links.forEach(l=>{ const d=P(l.e)-P(l.s); if(Math.abs(d)>0.05) dir[l.link]=d>0?1:-1; });
+  const byS={}, byE={}; links.forEach(l=>{(byS[l.s]=byS[l.s]||[]).push(l);(byE[l.e]=byE[l.e]||[]).push(l);});
+  for(let it=0;it<30;it++){ let ch=0;
+    links.forEach(l=>{ if(dir[l.link]) return;
+      const prev=(byE[l.s]||[]).filter(x=>x.s!==l.e&&dir[x.link]), next=(byS[l.e]||[]).filter(x=>x.e!==l.s&&dir[x.link]);
+      const votes=[...prev,...next].map(x=>dir[x.link]); if(!votes.length) return;
+      const v=votes.reduce((a,b)=>a+b,0); if(v){ dir[l.link]=v>0?1:-1; ch++; } });
+    if(!ch) break; }
+  const segVals=NODES.map(()=>[]); linkSpeed={}; let f=0,r=0,u=0;
+  links.forEach(l=>{ const d=dir[l.link]; if(d===1){ f++; if(l.spd>0){ linkSpeed[l.link]=l.spd; l.segs.forEach(i=>segVals[i].push(l.spd)); } } else if(d===-1) r++; else u++; });
+  dbg.links=all.length; dbg.routeLinks=roadLinks.length; dbg.dir=`공항 ${f} / 서울 ${r} / 미정 ${u}`;
+  dbg.perSeg=per.map(a=>a?a.length:'X').join(',');
   dbg.roads=[...new Set(all.map(l=>l.road))].slice(0,40).join(', ');
-  dbg.camLinkMatch=cams.filter(c=>L[c.link]).length;
   dbg.camNames=cams.map(c=>`${NODES[c.seg][0]}|${c.name}|${c.d.toFixed(2)}`).join('\n');
-  return NODES.map((n,i)=>segVals[i].length?{v:avg(segVals[i])}:{v:0});
+  return NODES.map((n,i)=>segVals[i].length?{v:avg(segVals[i])}:{v:0,why:(per[i]&&per[i].length)?'방향 미확인':'조회 실패'});
 }
 
 // ===== 렌더 =====
@@ -277,7 +278,7 @@ function render(sp){
     const sg=document.createElement('div'); sg.className='seg';
     sg.innerHTML=`<div class="l"><div class="rail" style="background:${colorOf(s.v)}"></div>
       <div class="info"><span class="sp" style="color:${colorOf(s.v)}">${s.v>0?s.v.toFixed(0):'—'}<small>${s.v>0?'km/h':''}</small></span>
-      <span>${esc(n[3])} · ${len.toFixed(1)}km</span></div></div>`;
+      <span>${esc(n[3])} · ${len.toFixed(1)}km${s.why?`<br><span style="color:var(--n)">${s.why}</span>`:''}</span></div></div>`;
     const right=document.createElement('div'); right.className='r';
     const list=cams.filter(c=>c.seg===i);
     if(!list.length) right.innerHTML='<div class="none">CCTV 없음</div>';
@@ -300,9 +301,10 @@ function render(sp){
 
 const isImg=c=>/jpe?g|png/i.test(c.fmt)||/\.(jpe?g|png)(\?|$)/i.test(c.url);
 function attach(v,url,onErr){
-  if(v.canPlayType('application/vnd.apple.mpegurl')){ v.src=url; return null; }
+  if(v.canPlayType('application/vnd.apple.mpegurl')){ v.addEventListener('error',()=>{ v.dataset.err='media '+(v.error&&v.error.code||''); onErr&&onErr(); },{once:true}); v.src=url; return null; }
   if(window.Hls&&Hls.isSupported()){ const h=new Hls({maxBufferLength:6,backBufferLength:0,manifestLoadingMaxRetry:2,levelLoadingMaxRetry:2,fragLoadingMaxRetry:3});
-    h.loadSource(url); h.attachMedia(v); h.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)onErr&&onErr()}); return h; }
+    h.loadSource(url); h.attachMedia(v); h.on(Hls.Events.ERROR,(e,d)=>{ if(d.fatal){ v.dataset.err=(d.details||d.type||'')+(d.response&&d.response.code?' '+d.response.code:''); onErr&&onErr(); } }); return h; }
+  v.addEventListener('error',()=>{ v.dataset.err='media '+(v.error&&v.error.code||''); onErr&&onErr(); },{once:true});
   v.src=url; return null;
 }
 function startTile(el,t){
@@ -331,7 +333,8 @@ async function freshUrls(){
 async function retryTile(el,t){
   const cap=el.querySelector('.cap .n');
   t.tries=(t.tries||0)+1;
-  if(t.tries>2){ stopTile(t); cap.textContent='⚠️ 영상 없음 · '+t.cam.name; el.classList.add('dead'); return; }
+  const why=(t.media&&t.media.dataset&&t.media.dataset.err)||'응답 없음';
+  if(t.tries>2){ stopTile(t); cap.textContent=`⚠️ ${why} · `+t.cam.name; el.classList.add('dead'); return; }
   cap.textContent='⏳ 다시 연결 중 · '+t.cam.name;
   stopTile(t); await freshUrls(); await sleep(400);
   if(visible.has(el)) startTile(el,t);
