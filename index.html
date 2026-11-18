@@ -172,14 +172,15 @@
 
 <script>
 // ===== 경로 노드 (이름, 경도, 위도, 다음 구간 도로) — 공항 방향 순서 =====
-const NODES = [
-  ['이산포JC',    126.720,37.660,'자유로'],
-  ['킨텍스IC',    126.738,37.657,'자유로'],
-  ['장항IC',      126.770,37.645,'자유로'],
-  ['자유로JC',    126.796,37.622,'제1순환'],
-  ['김포대교',    126.799,37.610,'제1순환'],
-  ['김포IC',      126.786,37.598,'제1순환'],
-  ['노오지JC',    126.771,37.588,'공항고속도로'],
+const NODES = [ // 지정 경로: 이산포IC → 자유로 → 자유로JC → 김포대교 → 김포IC → 노오지JC → 인천공항고속도로 → T2
+  ['이산포JC',    126.7250,37.6640,'자유로'],
+  ['킨텍스IC',    126.7371,37.6529,'자유로'],
+  ['장항IC',      126.7712,37.6359,'자유로'],
+  ['신평IC',      126.7873,37.6301,'자유로'],
+  ['자유로JC',    126.7983,37.6185,'제1순환'],
+  ['김포대교',    126.7923,37.6106,'제1순환'],
+  ['김포IC',      126.7752,37.5963,'제1순환'],
+  ['노오지JC',    126.7536,37.5710,'공항고속도로'],
   ['청라IC',      126.664,37.566,'공항고속도로'],
   ['북인천IC',    126.620,37.553,'공항고속도로'],
   ['영종대교',    126.560,37.545,'공항고속도로'],
@@ -188,7 +189,7 @@ const NODES = [
   ['영종해안북로',126.475,37.506,'제2터미널대로'],
   ['인천공항 T2', 126.434,37.467,'']
 ];
-const SHAPE = {11:[[126.495,37.516]], 12:[[126.452,37.494],[126.440,37.480]]};
+const SHAPE = {12:[[126.495,37.516]], 13:[[126.452,37.494],[126.440,37.480]]};
 const ROUTE_ROADS = /자유로|77호|제1순환|외곽순환|순환고속|인천국제공항|공항고속|신공항|영종해안북로|해안북로|제2터미널|공항대로/;
 const BBOX = {minX:126.41, maxX:126.83, minY:37.45, maxY:37.70};
 const EXCLUDE = /제2외곽|인천김포|북청라|검단양촌/; // 경로와 나란한 다른 도로
@@ -274,7 +275,7 @@ async function trafficCall(box){
     s:String(o.startNodeId||''),e:String(o.endNodeId||''),spd:+o.speed}));
 }
 async function loadTraffic(force){
-  const c=store.get('traffic2',null);
+  const c=store.get('traffic3',null);
   if(!force && c && Date.now()-c.t<TRAF_MS) return c.d;
   const n=NODES.length-1, per=new Array(n).fill(null);
   const one=async i=>{ for(let a=0;a<2;a++){ try{ return await trafficCall(segBox(i)); }catch(e){ dbg.trafficErr=e.message; if(/지연/.test(e.message)) return null; await sleep(600); } } return null; };
@@ -285,7 +286,7 @@ async function loadTraffic(force){
   per.forEach((v,i)=>{ if(!v||!v.length){ if(prev[i]&&prev[i].length){ per[i]=prev[i]; filled++; } else per[i]=[]; } });
   const got=per.filter(v=>v.length).length;
   dbg.trafficOk=`${got}/${n} 구간` + (filled?` (이전 정보 ${filled}개)`:'');
-  if(got && filled<got) store.set('traffic2',{t:Date.now(),d:per});
+  if(got && filled<got) store.set('traffic3',{t:Date.now(),d:per});
   if(!got) dbg.trafficFail=true;
   return per; // per[i] = 구간 i 영역의 링크들
 }
@@ -415,13 +416,31 @@ const HEX=v=>!(v>0)?'#475569':v>=70?'#22c55e':v>=30?'#eab308':'#ef4444';
 let map=null, mapLayer=null, segLines=[], routeGeo=null;
 function sizeMap(){ const w=$('mapWrap'); const top=w.getBoundingClientRect().top+scrollY; w.style.height=Math.max(300,innerHeight-top)+'px'; if(map) map.invalidateSize(); }
 // 실제 도로 모양: OSRM(오픈스트리트맵 경로 서버)에서 한 번 받아 휴대폰에 저장
+// 경로 지정점: 도로 위 좌표 + 진행 방향(도)으로 반대 차로·다른 도로에 붙지 않게 고정
+const ROUTE_WP=[
+  {p:[126.7310,37.6591], b:125, chk:'자유로(이산포~킨텍스)'},
+  {p:[126.7491,37.6462], b:127, chk:'자유로(킨텍스~장항)'},
+  {p:[126.7923,37.6106], b:218, chk:'김포대교'},
+  {p:[126.7561,37.5813], b:208, chk:'제1순환(김포IC~노오지JC)'},
+  {cam:/영종대교 동탑상부|영종대교시점/, p:[126.585,37.551], b:250, chk:'영종대교'},
+  {p:[126.4335,37.4660]}
+];
 async function getRouteGeo(){
   if(routeGeo) return routeGeo;
-  const c=store.get('routeGeo_v1',null); if(c&&c.length>50) return routeGeo=c;
-  const via=[0,4,6,9,11,13].map(i=>NODES[i][1].toFixed(5)+','+NODES[i][2].toFixed(5)).join(';');
-  try{ const r=await tfetch(`https://router.project-osrm.org/route/v1/driving/${via}?overview=full&geometries=geojson`,12000);
-    const j=await r.json(); const g=j.routes[0].geometry.coordinates; if(g.length>50){ store.set('routeGeo_v1',g); return routeGeo=g; } }catch(e){ dbg.routeErr=e.message; }
-  return routeGeo=ROUTE.slice(); // 실패 시 직선 근사
+  const c=store.get('routeGeo_v2',null); if(c&&c.length>50) return routeGeo=c;
+  const wp=ROUTE_WP.map(w=>{ const cm=w.cam&&cams.find(c=>w.cam.test(c.name)); return Object.assign({},w,{p:cm?[cm.x,cm.y]:w.p}); });
+  const coords=wp.map(w=>w.p[0].toFixed(5)+','+w.p[1].toFixed(5)).join(';');
+  const bear=wp.map(w=>w.b!=null?`${w.b},50`:'').join(';');
+  const rad=wp.map(w=>w.b!=null?'400':'unlimited').join(';');
+  try{
+    const r=await tfetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&bearings=${bear}&radiuses=${rad}`,12000);
+    const j=await r.json(); const g=j.routes[0].geometry.coordinates;
+    // 검증: 지정점마다 경로가 600m 안으로 지나가야 함 (다른 길로 새면 버림)
+    const miss=wp.filter(w=>w.chk).filter(w=>Math.min(...g.map(q=>Math.hypot((q[0]-w.p[0])*88.2,(q[1]-w.p[1])*111)))>0.6);
+    if(miss.length) throw new Error('경로 이탈: '+miss.map(m=>m.chk).join(','));
+    if(g.length>50){ store.set('routeGeo_v2',g); return routeGeo=g; }
+  }catch(e){ dbg.routeErr=e.message; }
+  return routeGeo=ROUTE.slice(); // 실패 시 IC/JC 직선 연결
 }
 function splitGeo(g){ // 노드 위치에서 경로를 잘라 구간별 좌표 목록
   const d2=(a,lon,lat)=>((a[0]-lon)*88.2)**2+((a[1]-lat)*111)**2; let prev=0; const idx=NODES.map((n,i)=>{
