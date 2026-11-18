@@ -100,6 +100,9 @@
   body.mapmode #mapWrap{display:block}
   body.mapmode #route,body.mapmode .legend{display:none}
   #map{width:100%;height:100%;background:#0b1220}
+  .darktile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.85) saturate(.6)}
+  .leaflet-control-layers{background:#1e293b;color:#e2e8f0;border:1px solid #334155!important}
+  .leaflet-control-layers-toggle{filter:invert(1)}
   .mlegend{position:absolute;left:8px;bottom:8px;z-index:500;background:rgba(15,23,42,.85);border:1px solid var(--line);border-radius:8px;padding:3px 8px;font-size:10px;color:var(--sub)}
   .mlegend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 2px 0 5px}
   .leaflet-container{font-family:inherit}
@@ -431,7 +434,15 @@ async function renderMap(sp){
   if(!window.L){ status('지도 라이브러리를 불러오지 못했습니다',true); return; }
   if(!map){
     map=L.map('map',{zoomControl:false,preferCanvas:false});
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:18,subdomains:'abcd',attribution:'© OpenStreetMap © CARTO'}).addTo(map);
+    // 배경 지도: 오픈스트리트맵(어둡게) / 위성 — 키 없이 사용 가능
+    const base={
+      '지도': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,className:'darktile',attribution:'© OpenStreetMap'}),
+      '지도(밝게)': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}),
+      '위성': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'© Esri'})
+    };
+    (base[cfg.base]||base['지도']).addTo(map);
+    L.control.layers(base,null,{position:'topright'}).addTo(map);
+    map.on('baselayerchange',e=>{ cfg.base=e.name; store.set('cfg',cfg); });
     const z=()=>{ const m=$('map'); m.classList.toggle('zthumb',map.getZoom()>=13); m.classList.toggle('zlab',map.getZoom()>=10);
       const tw=Math.min(180,Math.max(90,(map.getZoom()-12)*45+60)); m.style.setProperty('--tw',tw+'px'); schedule(); };
     map.on('zoomend',z); map.on('moveend',schedule); map.whenReady(z);
