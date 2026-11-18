@@ -125,7 +125,7 @@
   <div class="row">
     <h1>✈️ 이산포IC → T2</h1>
     <button id="btnInstall" title="앱 설치" style="display:none">⬇︎</button>
-    <button id="btnView" title="보기 전환: 한 화면 → 지도 → 목록">▤</button>
+    <button id="btnView" title="보기 전환: 지도 → 한 화면 → 목록">▤</button>
     <button id="btnMode" title="영상/정지화면 전환">🎥</button>
     <button id="btnRefresh" title="새로고침">⟳</button>
     <button id="btnSet" title="설정">⚙︎</button>
@@ -328,7 +328,7 @@ let schedT=null;
 if(cfg.type==='3'){ cfg.type='4'; cfg.still=true; store.set('cfg',cfg); }
 const still=()=>!!cfg.still;
 if(cfg.compact===undefined){ cfg.compact=true; cfg.still=true; store.set('cfg',cfg); }
-if(!cfg.view){ cfg.view=cfg.compact?'compact':'list'; store.set('cfg',cfg); }
+if(!cfg.mapDefault){ cfg.view='map'; cfg.mapDefault=1; cfg.still=true; store.set('cfg',cfg); } // 시작 화면 = 지도 (한 번만 적용, 이후엔 마지막 선택 유지)
 const compact=()=>cfg.view==='compact';
 const mapMode=()=>cfg.view==='map';
 // 한 화면 모드용 짧은 이름: [노선명] 제거, '(공항 12.5)' 같은 거리표 정리
@@ -580,7 +580,7 @@ $('btnMode').onclick=()=>{
   status(still()?`정지화면 · ${STILL_MS/1000}초마다 자동 갱신 · 누르면 실시간 영상`:`실시간 영상 · 동시 재생 ${MAX_PLAY}개`);
 };
 modeIcon();
-$('btnView').onclick=()=>{ cfg.view={compact:'map',map:'list',list:'compact'}[cfg.view]; cfg.compact=compact();
+$('btnView').onclick=()=>{ cfg.view={map:'compact',compact:'list',list:'map'}[cfg.view]; cfg.compact=compact();
   if(cfg.view!=='list'&&!still()){ cfg.still=true; modeIcon(); } store.set('cfg',cfg); scrollTo(0,0); render(lastSp); updateSpeeds(lastSp); fit();
   status({compact:'한 화면 보기',map:'지도 보기 · 확대하면 CCTV 정지화면 표시 · 카메라 누르면 실시간',list:'목록 보기'}[cfg.view]); };
 document.body.classList.toggle('compact',compact());
