@@ -12,6 +12,8 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#e2e8f0;--sub:#94a3b8;--acc:#38bdf8;--g:#22c55e;--y:#eab308;--r:#ef4444;--n:#475569;--err:#f87171}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -93,6 +95,24 @@
   body.compact .spd{font-size:8px;padding:0 2px;border-radius:3px}
   body.compact .fl{top:1px;right:1px;padding:0 3px;font-size:9px;border-radius:4px}
   body.compact .legend{display:none}
+  /* ===== 지도 모드 ===== */
+  #mapWrap{display:none;position:relative}
+  body.mapmode #mapWrap{display:block}
+  body.mapmode #route,body.mapmode .legend{display:none}
+  #map{width:100%;height:100%;background:#0b1220}
+  .mlegend{position:absolute;left:8px;bottom:8px;z-index:500;background:rgba(15,23,42,.85);border:1px solid var(--line);border-radius:8px;padding:3px 8px;font-size:10px;color:var(--sub)}
+  .mlegend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 2px 0 5px}
+  .leaflet-container{font-family:inherit}
+  .cm{background:none;border:none}
+  .cm .cdot{width:16px;height:16px;border-radius:50%;background:#0f172a;border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:9px;transform:translate(-50%,-50%);box-shadow:0 0 0 2px rgba(0,0,0,.4)}
+  .cm .tile{position:absolute;left:0;top:0;width:var(--tw,104px);transform:translate(-50%,calc(-100% - 12px));display:none;box-shadow:0 2px 8px rgba(0,0,0,.6);border:1px solid #fff}
+  #map.zthumb .cm .tile{display:block}
+  .cm.below .tile{transform:translate(-50%,12px)}
+  .cm .tile .cap{font-size:8px;padding:6px 3px 1px}
+  .cm .tile .fl{display:none}
+  .nlab{background:rgba(15,23,42,.8)!important;color:#e2e8f0!important;border:none!important;box-shadow:none!important;font-size:10px!important;padding:1px 4px!important;font-weight:700}
+  .nlab:before{display:none}
+  #map:not(.zlab) .nlab{display:none}
 </style>
 </head>
 <body>
@@ -100,7 +120,7 @@
   <div class="row">
     <h1>✈️ 이산포IC → T2</h1>
     <button id="btnInstall" title="앱 설치" style="display:none">⬇︎</button>
-    <button id="btnView" title="한 화면/목록 전환">▤</button>
+    <button id="btnView" title="보기 전환: 한 화면 → 지도 → 목록">▤</button>
     <button id="btnMode" title="영상/정지화면 전환">🎥</button>
     <button id="btnRefresh" title="새로고침">⟳</button>
     <button id="btnSet" title="설정">⚙︎</button>
@@ -109,6 +129,7 @@
 </header>
 <div id="status">불러오는 중…</div>
 <div id="route"></div>
+<div id="mapWrap"><div id="map"></div><div class="mlegend"><i style="background:#22c55e"></i>70+ <i style="background:#eab308"></i>30–70 <i style="background:#ef4444"></i>30↓ <i style="background:#475569"></i>없음</div></div>
 <div class="legend"><i style="background:var(--g)"></i>원활 70+ <i style="background:var(--y)"></i>서행 30–70 <i style="background:var(--r)"></i>정체 30↓ <i style="background:var(--n)"></i>정보 없음 (km/h, 공항 방향)</div>
 
 <div id="player">
@@ -302,9 +323,11 @@ let schedT=null;
 if(cfg.type==='3'){ cfg.type='4'; cfg.still=true; store.set('cfg',cfg); }
 const still=()=>!!cfg.still;
 if(cfg.compact===undefined){ cfg.compact=true; cfg.still=true; store.set('cfg',cfg); }
-const compact=()=>!!cfg.compact;
+if(!cfg.view){ cfg.view=cfg.compact?'compact':'list'; store.set('cfg',cfg); }
+const compact=()=>cfg.view==='compact';
+const mapMode=()=>cfg.view==='map';
 // 한 화면 모드용 짧은 이름: [노선명] 제거, '(공항 12.5)' 같은 거리표 정리
-const lbl=c=>compact()?c.name.replace(/^\[[^\]]*\]\s*/,'').replace(/\s*\(공항\s*[\d.]+\)/,'').replace(/영업소/,'TG'):c.name;
+const lbl=c=>(compact()||mapMode())?c.name.replace(/^\[[^\]]*\]\s*/,'').replace(/\s*\(공항\s*[\d.]+\)/,'').replace(/영업소/,'TG'):c.name;
 const STILL_MS=30000, SNAP_CONC=3; // 정지화면 갱신 주기, 동시 캡처 수
 const snapQ=[]; let snapActive=0;
 function requestSnap(el,t){ if(t.snapping) return; t.snapping=true; snapQ.push([el,t]); pump(); }
@@ -338,6 +361,9 @@ function schedule(){ clearTimeout(schedT); schedT=setTimeout(()=>{
 },150); }
 
 function render(sp){
+  document.body.classList.toggle('mapmode',mapMode());
+  $('btnView').textContent={compact:'▤',map:'🗺',list:'▦'}[cfg.view];
+  if(mapMode()) return renderMap(sp);
   tiles.forEach((t,el)=>{stopTile(t);io.unobserve(el)}); tiles.clear(); visible.clear();
   const R=$('route'); R.innerHTML='';
   NODES.forEach((n,i)=>{
@@ -366,7 +392,8 @@ function render(sp){
 }
 function fit(){
   document.body.classList.toggle('compact',compact());
-  $('btnView').textContent=compact()?'▤':'▦';
+  $('btnView').textContent={compact:'▤',map:'🗺',list:'▦'}[cfg.view];
+  if(mapMode()) return sizeMap();
   if(!compact()) return;
   // 실제로 그려 보면서 화면 높이에 맞는 가장 큰 크기(열 수 최소)를 찾음
   const R=$('route');
@@ -378,8 +405,62 @@ function fit(){
   set(pick);
 }
 addEventListener('resize',()=>{ clearTimeout(fit.t); fit.t=setTimeout(fit,200); });
+// ===== 지도 =====
+const HEX=v=>!(v>0)?'#475569':v>=70?'#22c55e':v>=30?'#eab308':'#ef4444';
+let map=null, mapLayer=null, segLines=[], routeGeo=null;
+function sizeMap(){ const w=$('mapWrap'); const top=w.getBoundingClientRect().top+scrollY; w.style.height=Math.max(300,innerHeight-top)+'px'; if(map) map.invalidateSize(); }
+// 실제 도로 모양: OSRM(오픈스트리트맵 경로 서버)에서 한 번 받아 휴대폰에 저장
+async function getRouteGeo(){
+  if(routeGeo) return routeGeo;
+  const c=store.get('routeGeo_v1',null); if(c&&c.length>50) return routeGeo=c;
+  const via=[0,4,6,9,11,13].map(i=>NODES[i][1].toFixed(5)+','+NODES[i][2].toFixed(5)).join(';');
+  try{ const r=await tfetch(`https://router.project-osrm.org/route/v1/driving/${via}?overview=full&geometries=geojson`,12000);
+    const j=await r.json(); const g=j.routes[0].geometry.coordinates; if(g.length>50){ store.set('routeGeo_v1',g); return routeGeo=g; } }catch(e){ dbg.routeErr=e.message; }
+  return routeGeo=ROUTE.slice(); // 실패 시 직선 근사
+}
+function splitGeo(g){ // 노드 위치에서 경로를 잘라 구간별 좌표 목록
+  const d2=(a,lon,lat)=>((a[0]-lon)*88.2)**2+((a[1]-lat)*111)**2; let prev=0; const idx=NODES.map((n,i)=>{
+    if(i===0) return 0; if(i===NODES.length-1) return g.length-1;
+    let best=prev, bd=1e9; for(let k=prev;k<g.length;k++){ const d=d2(g[k],n[1],n[2]); if(d<bd){bd=d;best=k;} } return prev=best; });
+  return NODES.slice(0,-1).map((n,i)=>g.slice(idx[i],Math.max(idx[i+1],idx[i]+1)+1).map(p=>[p[1],p[0]]));
+}
+function colorRoute(sp){ segLines.forEach((l,i)=>{ const v=(sp[i]||{}).v; l.setStyle({color:HEX(v)}); l.bindTooltip(`${NODES[i][0]}→${NODES[i+1][0]} · ${v>0?Math.round(v)+'km/h':'정보 없음'}`,{sticky:true}); }); }
+async function renderMap(sp){
+  tiles.forEach((t,el)=>{stopTile(t);io.unobserve(el)}); tiles.clear(); visible.clear();
+  sizeMap();
+  if(!window.L){ status('지도 라이브러리를 불러오지 못했습니다',true); return; }
+  if(!map){
+    map=L.map('map',{zoomControl:false,preferCanvas:false});
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{maxZoom:18,subdomains:'abcd',attribution:'© OpenStreetMap © CARTO'}).addTo(map);
+    const z=()=>{ const m=$('map'); m.classList.toggle('zthumb',map.getZoom()>=13); m.classList.toggle('zlab',map.getZoom()>=10);
+      const tw=Math.min(180,Math.max(90,(map.getZoom()-12)*45+60)); m.style.setProperty('--tw',tw+'px'); schedule(); };
+    map.on('zoomend',z); map.on('moveend',schedule); map.whenReady(z);
+  }
+  if(mapLayer) mapLayer.remove(); mapLayer=L.layerGroup().addTo(map); segLines=[];
+  const g=await getRouteGeo(); const parts=splitGeo(g);
+  if(!map._fitted){ map.fitBounds(L.latLngBounds(g.map(p=>[p[1],p[0]])),{padding:[16,16]}); map._fitted=true; }
+  parts.forEach(pts=>L.polyline(pts,{color:'#000',weight:10,opacity:.55}).addTo(mapLayer));
+  parts.forEach(pts=>segLines.push(L.polyline(pts,{color:'#475569',weight:6,opacity:.95,lineCap:'round'}).addTo(mapLayer)));
+  NODES.forEach((n,i)=>L.circleMarker([n[2],n[1]],{radius:3,color:'#fff',weight:1,fillColor:'#0f172a',fillOpacity:1}).addTo(mapLayer)
+    .bindTooltip(n[0],{permanent:true,direction:i%2?'left':'right',className:'nlab',offset:[i%2?-4:4,0]}));
+  cams.forEach((c,ci)=>{
+    const mk=L.marker([c.y,c.x],{icon:L.divIcon({className:'cm',html:'',iconSize:[0,0]})}).addTo(mapLayer);
+    const box=mk.getElement();
+    if(ci%2) box.classList.add('below'); // 썸네일 위·아래 번갈아 배치해 겹침 줄이기
+    box.innerHTML=`<div class="cdot">📷</div>`;
+    const el=document.createElement('div'); el.className='tile'+(flips.has(c.name)?' flip':'');
+    el.innerHTML=`<div class="cap"><span class="n">${esc(lbl(c))}</span></div>`;
+    box.appendChild(el);
+    const open=e=>{ L.DomEvent.stop(e); openPlayer(ci); };
+    box.querySelector('.cdot').addEventListener('click',open); el.addEventListener('click',open);
+    tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
+  });
+  colorRoute(lastSp&&lastSp.length?lastSp:sp); schedule();
+}
+addEventListener('resize',()=>{ if(mapMode()) sizeMap(); });
 function updateSpeeds(sp){
   let mins=0, known=0;
+  colorRoute(sp);
   NODES.slice(0,-1).forEach((n,i)=>{
     const len=NODE_AL[i+1]-NODE_AL[i], s=sp[i]||{v:0,why:'불러오는 중'};
     if(s.v>0){ mins+=len/s.v*60; known+=len; }
@@ -486,7 +567,9 @@ $('btnMode').onclick=()=>{
   status(still()?`정지화면 · ${STILL_MS/1000}초마다 자동 갱신 · 누르면 실시간 영상`:`실시간 영상 · 동시 재생 ${MAX_PLAY}개`);
 };
 modeIcon();
-$('btnView').onclick=()=>{ cfg.compact=!compact(); if(compact()&&!still()){ cfg.still=true; modeIcon(); } store.set('cfg',cfg); render(lastSp); updateSpeeds(lastSp); scrollTo(0,0); };
+$('btnView').onclick=()=>{ cfg.view={compact:'map',map:'list',list:'compact'}[cfg.view]; cfg.compact=compact();
+  if(cfg.view!=='list'&&!still()){ cfg.still=true; modeIcon(); } store.set('cfg',cfg); scrollTo(0,0); render(lastSp); updateSpeeds(lastSp); fit();
+  status({compact:'한 화면 보기',map:'지도 보기 · 확대하면 CCTV 정지화면 표시 · 카메라 누르면 실시간',list:'목록 보기'}[cfg.view]); };
 document.body.classList.toggle('compact',compact());
 $('btnSet').onclick=openSettings;
 $('sClose').onclick=()=>$('settings').classList.remove('show');
