@@ -119,6 +119,19 @@
   .nlab{background:rgba(15,23,42,.8)!important;color:#e2e8f0!important;border:none!important;box-shadow:none!important;font-size:10px!important;padding:1px 4px!important;font-weight:700}
   .nlab:before{display:none}
   #map:not(.zlab) .nlab{display:none}
+  /* 지도 CCTV 팝업 */
+  .campop .leaflet-popup-content-wrapper{background:#0f172a;color:#e2e8f0;border:1px solid #38bdf8;border-radius:12px;padding:0}
+  .campop .leaflet-popup-content{margin:8px}
+  .campop .leaflet-popup-tip{background:#38bdf8}
+  .campop a.leaflet-popup-close-button{color:#e2e8f0;font-size:22px;width:28px;height:28px;top:2px;right:2px}
+  .cpop .ph{display:flex;align-items:center;gap:6px;padding-right:24px;font-size:13px;flex-wrap:wrap}
+  .cpop .ph .ps{width:100%;font-size:11px;color:#94a3b8}
+  .cpop .pv{position:relative;margin-top:6px;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/10}
+  .cpop .pv video{width:100%;height:100%;object-fit:contain;display:block}
+  .cpop .pv.flip video{transform:scaleX(-1)}
+  .cpop .pm{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#94a3b8;text-align:center;padding:8px}
+  .cpop .pb{display:flex;gap:6px;margin-top:6px}
+  .cpop .pb button{flex:1;padding:6px 0;font-size:13px}
 </style>
 </head>
 <body>
@@ -470,6 +483,32 @@ function splitGeo(g){ // 노드 위치에서 경로를 잘라 구간별 좌표 �
     let best=prev, bd=1e9; for(let k=prev;k<g.length;k++){ const d=d2(g[k],n[1],n[2]); if(d<bd){bd=d;best=k;} } return prev=best; });
   return NODES.slice(0,-1).map((n,i)=>g.slice(idx[i],Math.max(idx[i+1],idx[i]+1)+1).map(p=>[p[1],p[0]]));
 }
+// 지도에서 CCTV를 누르면 그 자리에 팝업으로 실시간 영상
+let popupHls=null, popupVid=null;
+function stopPopup(){ if(popupHls){ popupHls.destroy(); popupHls=null; } if(popupVid){ popupVid.pause(); popupVid.removeAttribute('src'); popupVid.load(); popupVid=null; } }
+function camPopup(ci){
+  const c=cams[ci]; if(!c) return; stopPopup();
+  const sp=linkSpeed[c.link], w=Math.min(innerWidth-40,360);
+  const box=document.createElement('div'); box.className='cpop'; box.style.width=w+'px';
+  box.innerHTML=`<div class="ph"><b>${esc(lbl(c))}</b>${sp>0?`<span class="spd" style="background:${colorOf(sp)}">${sp}</span>`:''}
+      <span class="ps">${esc(NODES[c.seg][0])}→${esc(NODES[c.seg+1][0])}</span></div>
+    <div class="pv${flips.has(c.name)?' flip':''}"><video playsinline muted autoplay></video><div class="pm">⏳ 연결 중…</div></div>
+    <div class="pb"><button data-a="prev">◀</button><button data-a="flip">⇄ 반전</button><button data-a="big">⛶ 크게</button><button data-a="next">▶</button></div>`;
+  const v=box.querySelector('video'), pm=box.querySelector('.pm'), pv=box.querySelector('.pv');
+  popupVid=v;
+  v.addEventListener('playing',()=>{ pm.remove(); c._pr=0; },{once:true});
+  popupHls=attach(v,c.url,()=>{ if(popupVid!==v) return;
+    if(!c._pr){ c._pr=1; pm.textContent='⏳ 다시 연결 중…'; freshUrls().then(()=>{ if(popupVid===v) camPopup(ci); }); } // 주소 만료 대비 1회 재시도
+    else { c._pr=0; pm.textContent='⚠️ 영상 연결 실패 — 카메라 점검 중일 수 있습니다'; } });
+  v.play().catch(()=>{});
+  box.querySelector('.pb').addEventListener('click',e=>{ const a=e.target.dataset.a; if(!a) return; L.DomEvent.stop(e);
+    if(a==='flip'){ toggleFlip(c.name); pv.classList.toggle('flip',flips.has(c.name)); tiles.forEach((t,el)=>{ if(t.cam.name===c.name) el.classList.toggle('flip',flips.has(c.name)); }); }
+    if(a==='big'){ map.closePopup(); openPlayer(ci); }
+    if(a==='prev'&&ci>0){ camPopup(ci-1); }
+    if(a==='next'&&ci<cams.length-1){ camPopup(ci+1); } });
+  L.popup({maxWidth:w+20,minWidth:w,autoPanPadding:[10,60],className:'campop',closeButton:true})
+    .setLatLng([c.y,c.x]).setContent(box).openOn(map);
+}
 function colorRoute(sp){ segLines.forEach((l,i)=>{ const v=(sp[i]||{}).v; l.setStyle({color:HEX(v)}); l.bindTooltip(`${NODES[i][0]}→${NODES[i+1][0]} · ${v>0?Math.round(v)+'km/h':'정보 없음'}`,{sticky:true}); }); }
 async function renderMap(sp){
   tiles.forEach((t,el)=>{stopTile(t);io.unobserve(el)}); tiles.clear(); visible.clear();
@@ -489,6 +528,7 @@ async function renderMap(sp){
     const z=()=>{ const m=$('map'); m.classList.toggle('zthumb',map.getZoom()>=13); m.classList.toggle('zlab',map.getZoom()>=10);
       const tw=Math.min(180,Math.max(90,(map.getZoom()-12)*45+60)); m.style.setProperty('--tw',tw+'px'); schedule(); };
     map.on('zoomend',z); map.on('moveend',schedule); map.whenReady(z);
+    map.on('popupclose',()=>stopPopup());
   }
   if(mapLayer) mapLayer.remove(); mapLayer=L.layerGroup().addTo(map); segLines=[];
   const g=await getRouteGeo(); const parts=splitGeo(g);
@@ -505,7 +545,7 @@ async function renderMap(sp){
     const el=document.createElement('div'); el.className='tile'+(flips.has(c.name)?' flip':'');
     el.innerHTML=`<div class="cap"><span class="n">${esc(lbl(c))}</span></div>`;
     box.appendChild(el);
-    const open=e=>{ L.DomEvent.stop(e); openPlayer(ci); };
+    const open=e=>{ L.DomEvent.stop(e); camPopup(ci); };
     box.querySelector('.cdot').addEventListener('click',open); el.addEventListener('click',open);
     tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
   });
