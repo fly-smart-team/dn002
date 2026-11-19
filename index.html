@@ -278,7 +278,7 @@ function distToGeo(x,y,g){ let best=1e9;
     const dx=bx-ax, dy=by-ay, L=dx*dx+dy*dy; let t=L?-(ax*dx+ay*dy)/L:0; t=Math.max(0,Math.min(1,t));
     const d=Math.hypot(ax+t*dx, ay+t*dy); if(d<best) best=d; } return best; }
 function refineCams(){
-  const g=routeGeo||store.get('routeGeo_v2',null); if(!g||g.length<=50) return; // 실제 도로선이 있을 때만
+  const g=routeGeo||store.get('routeGeo_v3',null); if(!g||g.length<=50) return; // 실제 도로선이 있을 때만
   const before=cams.length;
   cams=cams.filter(c=>(c.gd=distToGeo(c.x,c.y,g))<=GEO_BUF);
   dbg.camsOffRoute=before-cams.length;
@@ -453,27 +453,41 @@ function sizeMap(){ const w=$('mapWrap'); const top=w.getBoundingClientRect().to
 // 실제 도로 모양: OSRM(오픈스트리트맵 경로 서버)에서 한 번 받아 휴대폰에 저장
 // 경로 지정점: 도로 위 좌표 + 진행 방향(도)으로 반대 차로·다른 도로에 붙지 않게 고정
 const ROUTE_WP=[
-  {p:[126.7310,37.6591], b:125, chk:'자유로(이산포~킨텍스)'},
-  {p:[126.7491,37.6462], b:127, chk:'자유로(킨텍스~장항)'},
-  {p:[126.7923,37.6106], b:218, chk:'김포대교'},
-  {p:[126.7561,37.5813], b:208, chk:'제1순환(김포IC~노오지JC)'},
-  {cam:/영종대교 동탑상부|영종대교시점/, p:[126.585,37.551], b:250, chk:'영종대교'},
+  {p:[126.7310,37.6591], b:125, road:/자유로/, chk:'자유로(이산포~킨텍스)'},
+  {p:[126.7491,37.6462], b:127, road:/자유로/, chk:'자유로(킨텍스~장항)'},
+  {p:[126.7800,37.6320], b:125, road:/자유로/, chk:'자유로(장항~신평)'},
+  {p:[126.7923,37.6106], b:218, road:/김포대교|순환/, chk:'김포대교'},
+  {p:[126.7561,37.5813], b:208, road:/순환/, chk:'제1순환(김포IC~노오지JC)'},
+  {cam:/영종대교 동탑상부|영종대교시점/, p:[126.585,37.551], b:250, road:/공항|영종/, chk:'영종대교'},
   {p:[126.4335,37.4660]}
 ];
+const OSRM='https://router.project-osrm.org';
+// 지정점을 '그 도로 이름'을 가진 가장 가까운 도로 위로 옮김 (옆 동네 길에 붙는 것 방지)
+async function snapToRoad(w){
+  if(!w.road) return w;
+  try{
+    const r=await tfetch(`${OSRM}/nearest/v1/driving/${w.p[0].toFixed(5)},${w.p[1].toFixed(5)}?number=40&bearings=${w.b},60`,8000);
+    const j=await r.json(); const hit=(j.waypoints||[]).find(x=>w.road.test(x.name||''));
+    if(hit) return Object.assign({},w,{p:hit.location,snapped:hit.name});
+    dbg.snapMiss=(dbg.snapMiss||'')+w.chk+';';
+  }catch(e){ dbg.snapErr=e.message; }
+  return w;
+}
 async function getRouteGeo(){
   if(routeGeo) return routeGeo;
-  const c=store.get('routeGeo_v2',null); if(c&&c.length>50) return routeGeo=c;
-  const wp=ROUTE_WP.map(w=>{ const cm=w.cam&&cams.find(c=>w.cam.test(c.name)); return Object.assign({},w,{p:cm?[cm.x,cm.y]:w.p}); });
-  const coords=wp.map(w=>w.p[0].toFixed(5)+','+w.p[1].toFixed(5)).join(';');
-  const bear=wp.map(w=>w.b!=null?`${w.b},50`:'').join(';');
-  const rad=wp.map(w=>w.b!=null?'400':'unlimited').join(';');
+  const c=store.get('routeGeo_v3',null); if(c&&c.length>50) return routeGeo=c;
+  let wp=ROUTE_WP.map(w=>{ const cm=w.cam&&cams.find(c=>w.cam.test(c.name)); return Object.assign({},w,{p:cm?[cm.x,cm.y]:w.p}); });
+  wp=await Promise.all(wp.map(snapToRoad));
+  const coords=wp.map(w=>(+w.p[0]).toFixed(6)+','+(+w.p[1]).toFixed(6)).join(';');
+  const bear=wp.map(w=>w.b!=null?`${w.b},45`:'').join(';');
+  const rad=wp.map(w=>w.b!=null?(w.snapped?'60':'400'):'unlimited').join(';');
   try{
-    const r=await tfetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&bearings=${bear}&radiuses=${rad}`,12000);
+    const r=await tfetch(`${OSRM}/route/v1/driving/${coords}?overview=full&geometries=geojson&bearings=${bear}&radiuses=${rad}&continue_straight=true`,12000);
     const j=await r.json(); const g=j.routes[0].geometry.coordinates;
-    // 검증: 지정점마다 경로가 600m 안으로 지나가야 함 (다른 길로 새면 버림)
-    const miss=wp.filter(w=>w.chk).filter(w=>Math.min(...g.map(q=>Math.hypot((q[0]-w.p[0])*88.2,(q[1]-w.p[1])*111)))>0.6);
+    dbg.routeVia=(j.waypoints||[]).map(x=>x.name||'?').join(' → ');
+    const miss=wp.filter(w=>w.chk).filter(w=>distToGeo(w.p[0],w.p[1],g)>0.3);
     if(miss.length) throw new Error('경로 이탈: '+miss.map(m=>m.chk).join(','));
-    if(g.length>50){ store.set('routeGeo_v2',g); return routeGeo=g; }
+    if(g.length>50){ store.set('routeGeo_v3',g); return routeGeo=g; }
   }catch(e){ dbg.routeErr=e.message; }
   return routeGeo=ROUTE.slice(); // 실패 시 IC/JC 직선 연결
 }
