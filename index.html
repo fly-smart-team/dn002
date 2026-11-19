@@ -269,7 +269,18 @@ async function loadCams(force){
     .sort((a,b)=>a.along-b.along);
   cams.forEach(c=>c.seg=segOf(c.along));
   dbg.camsAll=raw.length; dbg.camsRoute=cams.length;
+  bridgeOnly2();
   refineCams();
+}
+// 영종대교 카메라는 상부 1개 + 하부 1개만 표시
+const BRIDGE=/영종대교/;
+const BRIDGE_TOP=[/영종대교\s*\(공항\s*12\.5\)/, /동탑상부/, /서탑상부/, /상부/]; // 앞쪽이 우선
+function bridgeOnly2(){
+  const grp=cams.filter(c=>BRIDGE.test(c.name)); if(grp.length<=2) return;
+  let top=null; for(const r of BRIDGE_TOP){ top=grp.find(c=>r.test(c.name)); if(top) break; }
+  const low=grp.find(c=>/하부/.test(c.name));
+  cams=cams.filter(c=>!BRIDGE.test(c.name)||c===top||c===low);
+  dbg.bridgeKept=[top,low].filter(Boolean).map(c=>c.name).join(' / ');
 }
 // 실제 도로 모양(경로 서버에서 받은 선)에서 200m 넘게 떨어진 카메라는 다른 도로로 보고 제외
 const GEO_BUF=0.2;
