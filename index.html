@@ -46,14 +46,15 @@
   .tile.dead{opacity:.55}
   .tile .cap .n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tile canvas{width:100%;height:100%;object-fit:cover;display:block}
-  .tile .sv{position:absolute;inset:0;opacity:0;pointer-events:none}
+  .tile .sv{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+  .tile .cap{z-index:1}
   .tile.flip canvas,.tile.flip video,.tile.flip img,#player.flip #vid,#player.flip #pImg{transform:scaleX(-1)}
   .fl{position:absolute;top:5px;right:5px;z-index:2;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:2px 7px;font-size:13px}
   .tile.flip .fl{background:var(--acc);color:#0f172a;border-color:var(--acc)}
   .spd{font-weight:800;padding:0 5px;border-radius:5px;color:#0f172a;font-size:11px}
   .legend{font-size:11px;color:var(--sub);padding:10px}
   .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 3px 0 8px;vertical-align:-1px}
-  #player,#settings{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:10;display:none;flex-direction:column;padding:calc(12px + env(safe-area-inset-top)) 12px 12px}
+  #player,#settings{position:fixed;inset:0;background:rgba(0,0,0,.94);z-index:3000;display:none;flex-direction:column;padding:calc(12px + env(safe-area-inset-top)) 12px 12px}
   #player.show,#settings.show{display:flex}
   #pTitle{flex:1;font-weight:700;font-size:14px}
   #vid,#pImg{width:100%;max-height:70vh;background:#000;border-radius:10px;margin-top:10px}
@@ -255,6 +256,19 @@ async function loadCams(force){
     .sort((a,b)=>a.along-b.along);
   cams.forEach(c=>c.seg=segOf(c.along));
   dbg.camsAll=raw.length; dbg.camsRoute=cams.length;
+  refineCams();
+}
+// 실제 도로 모양(경로 서버에서 받은 선)에서 200m 넘게 떨어진 카메라는 다른 도로로 보고 제외
+const GEO_BUF=0.2;
+function distToGeo(x,y,g){ let best=1e9;
+  for(let i=0;i<g.length-1;i++){ const ax=(g[i][0]-x)*88.2, ay=(g[i][1]-y)*111, bx=(g[i+1][0]-x)*88.2, by=(g[i+1][1]-y)*111;
+    const dx=bx-ax, dy=by-ay, L=dx*dx+dy*dy; let t=L?-(ax*dx+ay*dy)/L:0; t=Math.max(0,Math.min(1,t));
+    const d=Math.hypot(ax+t*dx, ay+t*dy); if(d<best) best=d; } return best; }
+function refineCams(){
+  const g=routeGeo||store.get('routeGeo_v2',null); if(!g||g.length<=50) return; // 실제 도로선이 있을 때만
+  const before=cams.length;
+  cams=cams.filter(c=>(c.gd=distToGeo(c.x,c.y,g))<=GEO_BUF);
+  dbg.camsOffRoute=before-cams.length;
 }
 
 // 구간마다 좁은 영역(BBOX)으로 소통정보 조회 → 링크가 어느 구간에 있는지 알 수 있음
@@ -342,17 +356,25 @@ function pump(){ while(snapActive<SNAP_CONC && snapQ.length){ const [el,t]=snapQ
   snapActive++; snap(el,t).finally(()=>{ snapActive--; t.snapping=false; pump(); }); } }
 function snap(el,t){ return new Promise(res=>{
   const cap=el.querySelector('.cap .n');
-  const v=document.createElement('video'); v.className='sv'; v.muted=true; v.playsInline=true; v.setAttribute('playsinline',''); el.appendChild(v);
+  const v=document.createElement('video'); v.className='sv'; v.muted=true; v.playsInline=true; v.setAttribute('playsinline','');
+  el.insertBefore(v, el.firstChild);
   let h=null, done=false;
+  const isBlack=c=>{ try{ const s=document.createElement('canvas'); s.width=32; s.height=20; const x=s.getContext('2d'); x.drawImage(c,0,0,32,20);
+      const d=x.getImageData(0,0,32,20).data; let sum=0; for(let i=0;i<d.length;i+=4) sum+=d[i]+d[i+1]+d[i+2]; return sum/(d.length/4)/3<10; }catch(e){ return false; } };
+  const draw=()=>{ let c=el.querySelector('canvas'); if(!c){ c=document.createElement('canvas'); el.insertBefore(c,v.nextSibling); }
+    c.width=v.videoWidth; c.height=v.videoHeight; c.getContext('2d').drawImage(v,0,0,c.width,c.height); return c; };
   const finish=async ok=>{ if(done) return; done=true; clearTimeout(to);
-    if(ok && v.videoWidth){ let c=el.querySelector('canvas'); if(!c){ c=document.createElement('canvas'); el.prepend(c); }
-      c.width=v.videoWidth; c.height=v.videoHeight; c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+    if(ok && v.videoWidth){
+      let c=draw(); for(let k=0;k<4 && isBlack(c);k++){ await sleep(700); c=draw(); } // 첫 장면이 검으면 조금 기다렸다 다시
       t.snapAt=Date.now(); t.fails=0; el.classList.remove('dead');
       cap.textContent=`${lbl(t.cam)} · ${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`; }
     else { t.fails=(t.fails||0)+1; if(t.fails===1){ await freshUrls(); t.snapAt=0; } else { el.classList.add('dead'); cap.textContent='⚠️ 화면 없음 · '+lbl(t.cam); t.snapAt=Date.now(); } }
     if(h) h.destroy(); v.pause(); v.removeAttribute('src'); v.load(); v.remove(); res(); };
-  const to=setTimeout(()=>finish(false),10000);
-  v.addEventListener('playing',()=>setTimeout(()=>finish(true),400),{once:true});
+  const to=setTimeout(()=>finish(false),12000);
+  v.addEventListener('playing',()=>{
+    if(v.requestVideoFrameCallback){ let n=0; const cb=()=>{ if(++n>=3) setTimeout(()=>finish(true),150); else v.requestVideoFrameCallback(cb); }; v.requestVideoFrameCallback(cb); }
+    else setTimeout(()=>finish(true),900);
+  },{once:true});
   if(!el.querySelector('canvas')) cap.textContent='⏳ '+lbl(t.cam);
   h=attach(v,t.cam.url,()=>finish(false)); v.play().catch(()=>{});
 }); }
@@ -577,6 +599,7 @@ async function load(force){
   try{
     status('CCTV 목록 받는 중…');
     await loadCams(force).catch(e=>errs.push('CCTV: '+e.message));
+    if(!routeGeo){ await getRouteGeo(); refineCams(); }
     render([]);                       // CCTV 먼저 표시
     status('구간 속도 받는 중…');
     let traffic=[];
@@ -615,7 +638,7 @@ document.addEventListener('visibilitychange',()=>{ if(document.hidden) tiles.for
 
 load(false);
 </script>
-<div id="installTip" style="display:none;position:fixed;left:10px;right:10px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:20;background:#1e293b;border:1px solid #38bdf8;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5">
+<div id="installTip" style="display:none;position:fixed;left:10px;right:10px;bottom:calc(14px + env(safe-area-inset-bottom));z-index:3100;background:#1e293b;border:1px solid #38bdf8;border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.5">
   <b>홈 화면에 앱으로 설치</b><br><span id="installMsg"></span>
   <div style="text-align:right;margin-top:6px"><button id="installClose">닫기</button></div>
 </div>
