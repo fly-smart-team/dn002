@@ -175,6 +175,12 @@
       <option value="1.0">1.0 km — 기본</option>
       <option value="2.0">2.0 km — 넓게</option>
     </select>
+    <label>실시간 영상 동시 재생 수</label>
+    <select id="sPlay">
+      <option value="4">4개 — 가장 안정적</option>
+      <option value="6">6개 — 기본</option>
+      <option value="8">8개 — 빠른 와이파이에서</option>
+    </select>
     <label>중계 서버 주소 (선택)</label>
     <input id="sProxy" placeholder="비워두면 ITS 서버 직접 호출">
     <div class="hint">경로: 이산포JC → 킨텍스IC → 장항IC → 자유로JC → 김포대교 → 김포IC → 노오지JC → 청라IC → 북인천IC → 영종대교 → 금산IC → 공항입구JC → 영종해안북로 → 제2여객터미널.<br>CCTV는 화면에 보이는 것만 재생합니다. 영상을 누르면 크게 봅니다. ⇄ 버튼은 카메라별 좌우 반전이며 이 기기에 저장됩니다.<br>호출 절약: CCTV 10분, 속도 3분 저장.</div>
@@ -207,7 +213,8 @@ const SHAPE = {12:[[126.495,37.516]], 13:[[126.452,37.494],[126.440,37.480]]};
 const ROUTE_ROADS = /자유로|77호|제1순환|외곽순환|순환고속|인천국제공항|공항고속|신공항|영종해안북로|해안북로|제2터미널|공항대로/;
 const BBOX = {minX:126.41, maxX:126.83, minY:37.45, maxY:37.70};
 const EXCLUDE = /제2외곽|인천김포|북청라|검단양촌/; // 경로와 나란한 다른 도로
-const MAX_PLAY = 4; // 동시 재생 수 (브라우저 연결 제한)
+let MAX_PLAY = 6; // 동시 재생 수 (설정에서 변경)
+const PER_HOST = 5; // 같은 영상 서버에 동시에 여는 최대 수 (브라우저는 서버당 약 6개 제한)
 const BASE = 'https://openapi.its.go.kr:9443';
 const CCTV_MS = 5*60*1000, TRAF_MS = 3*60*1000;
 
@@ -257,9 +264,10 @@ async function api(path, params){
   return d.filter(Boolean);
 }
 
-async function loadCams(force){
+async function loadCams(force,cacheOnly){
   const ck='cctv_'+cfg.type, c=store.get(ck,null); let raw;
-  if(!force && c && Date.now()-c.t<CCTV_MS) raw=c.d;
+  if(cacheOnly){ if(!c) return false; raw=c.d; }
+  else if(!force && c && Date.now()-c.t<CCTV_MS) raw=c.d;
   else{ raw=(await api('cctvInfo',{type:'all',cctvType:cfg.type})).filter(o=>o.cctvurl)
           .map(o=>({name:(o.cctvname||'').trim(),url:o.cctvurl,x:+o.coordx,y:+o.coordy,fmt:o.cctvformat||'',link:String(o.roadsectionid||'')}));
         store.set(ck,{t:Date.now(),d:raw}); }
@@ -271,6 +279,7 @@ async function loadCams(force){
   dbg.camsAll=raw.length; dbg.camsRoute=cams.length;
   bridgeOnly2();
   refineCams();
+  return true;
 }
 // 영종대교 카메라는 상부 1개 + 하부 1개만 표시
 const BRIDGE=/영종대교/;
@@ -317,7 +326,7 @@ async function loadTraffic(force){
   if(!force && c && Date.now()-c.t<TRAF_MS) return c.d;
   const n=NODES.length-1, per=new Array(n).fill(null);
   const one=async i=>{ for(let a=0;a<2;a++){ try{ return await trafficCall(segBox(i)); }catch(e){ dbg.trafficErr=e.message; if(/지연/.test(e.message)) return null; await sleep(600); } } return null; };
-  for(let i=0;i<n;i+=3){ const r=await Promise.all([i,i+1,i+2].filter(k=>k<n).map(one)); r.forEach((v,k)=>per[i+k]=v);
+  for(let i=0;i<n;i+=5){ const r=await Promise.all([i,i+1,i+2,i+3,i+4].filter(k=>k<n).map(one)); r.forEach((v,k)=>per[i+k]=v);
     if(r.every(v=>v===null)) break; } // 서버가 응답하지 않으면 나머지는 건너뜀
   // 실패한 구간은 이전 정보로 채움
   const prev=c?.d||[]; let filled=0;
@@ -372,7 +381,7 @@ const compact=()=>cfg.view==='compact';
 const mapMode=()=>cfg.view==='map';
 // 한 화면 모드용 짧은 이름: [노선명] 제거, '(공항 12.5)' 같은 거리표 정리
 const lbl=c=>(compact()||mapMode())?c.name.replace(/^\[[^\]]*\]\s*/,'').replace(/\s*\(공항\s*[\d.]+\)/,'').replace(/영업소/,'TG'):c.name;
-const STILL_MS=30000, SNAP_CONC=3; // 정지화면 갱신 주기, 동시 캡처 수
+const STILL_MS=30000, SNAP_CONC=5; // 정지화면 갱신 주기, 동시 캡처 수
 const snapQ=[]; let snapActive=0;
 function requestSnap(el,t){ if(t.snapping) return; t.snapping=true; snapQ.push([el,t]); pump(); }
 function pump(){ while(snapActive<SNAP_CONC && snapQ.length){ const [el,t]=snapQ.shift();
@@ -390,7 +399,7 @@ function snap(el,t){ return new Promise(res=>{
   const finish=async ok=>{ if(done) return; done=true; clearTimeout(to);
     if(ok && v.videoWidth){
       let c=draw(); for(let k=0;k<4 && isBlack(c);k++){ await sleep(700); c=draw(); } // 첫 장면이 검으면 조금 기다렸다 다시
-      t.snapAt=Date.now(); t.fails=0; el.classList.remove('dead');
+      t.snapAt=Date.now(); t.fails=0; el.classList.remove('dead'); saveSnap(t.cam,c);
       cap.textContent=`${lbl(t.cam)} · ${new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`; }
     else { t.fails=(t.fails||0)+1; if(t.fails===1){ await freshUrls(); t.snapAt=0; } else { el.classList.add('dead'); cap.textContent='⚠️ 화면 없음 · '+lbl(t.cam); t.snapAt=Date.now(); } }
     if(h) h.destroy(); v.pause(); v.removeAttribute('src'); v.load(); v.remove(); res(); };
@@ -407,7 +416,9 @@ setInterval(()=>{ if(!still()||document.hidden||$('player').classList.contains('
 function schedule(){ clearTimeout(schedT); schedT=setTimeout(()=>{
   if($('player').classList.contains('show')) return;
   if(still()){ tiles.forEach((t,el)=>{ stopTile(t); if(visible.has(el) && !t.snapAt) requestSnap(el,t); }); return; }
-  const order=[...tiles.keys()].filter(el=>visible.has(el)).slice(0,still()?99:MAX_PLAY);
+  const host=u=>{ try{ return new URL(u).host; }catch(e){ return ''; } }, per={}, order=[];
+  for(const el of tiles.keys()){ if(!visible.has(el)||order.length>=MAX_PLAY) continue;
+    const h=host(tiles.get(el).cam.url); if((per[h]||0)>=PER_HOST) continue; per[h]=(per[h]||0)+1; order.push(el); }
   tiles.forEach((t,el)=>{ if(!order.includes(el)) stopTile(t); });
   order.forEach(el=>startTile(el,tiles.get(el)));
 },150); }
@@ -435,7 +446,7 @@ function render(sp){
       fb.onclick=e=>{e.stopPropagation(); toggleFlip(c.name); el.classList.toggle('flip',flips.has(c.name));};
       el.appendChild(fb);
       el.onclick=()=>openPlayer(cams.indexOf(c));
-      right.appendChild(el); tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
+      right.appendChild(el); if(still()) paintCached(el,c); tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
     });
     sg.appendChild(right); R.appendChild(sg);
   });
@@ -508,6 +519,17 @@ function splitGeo(g){ // 노드 위치에서 경로를 잘라 구간별 좌표 �
     let best=prev, bd=1e9; for(let k=prev;k<g.length;k++){ const d=d2(g[k],n[1],n[2]); if(d<bd){bd=d;best=k;} } return prev=best; });
   return NODES.slice(0,-1).map((n,i)=>g.slice(idx[i],Math.max(idx[i+1],idx[i]+1)+1).map(p=>[p[1],p[0]]));
 }
+// 마지막 정지화면을 작게 저장해 두었다가 다음에 열 때 바로 보여줌
+const SNAP_KEEP=6*3600*1000;
+function saveSnap(cam,c){ try{ const k=document.createElement('canvas'), W=320; k.width=W; k.height=Math.round(c.height*W/c.width);
+  k.getContext('2d').drawImage(c,0,0,k.width,k.height); store.set('snap_'+cam.name,{t:Date.now(),d:k.toDataURL('image/jpeg',0.6)}); }catch(e){} }
+function paintCached(el,cam){
+  const sv=store.get('snap_'+cam.name,null); if(!sv||Date.now()-sv.t>SNAP_KEEP) return;
+  const img=new Image(); img.onload=()=>{ if(el.querySelector('canvas')) return;
+    const c=document.createElement('canvas'); c.width=img.width; c.height=img.height; c.getContext('2d').drawImage(img,0,0); el.insertBefore(c,el.firstChild);
+    const n=el.querySelector('.cap .n'); if(n) n.textContent=`${lbl(cam)} · ${new Date(sv.t).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}`; };
+  img.src=sv.d;
+}
 // 지도에서 CCTV를 누르면 그 자리에 팝업으로 실시간 영상
 let popupHls=null, popupVid=null;
 function stopPopup(){ if(popupHls){ popupHls.destroy(); popupHls=null; } if(popupVid){ popupVid.pause(); popupVid.removeAttribute('src'); popupVid.load(); popupVid=null; } }
@@ -572,7 +594,7 @@ async function renderMap(sp){
     box.appendChild(el);
     const open=e=>{ L.DomEvent.stop(e); camPopup(ci); };
     box.querySelector('.cdot').addEventListener('click',open); el.addEventListener('click',open);
-    tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
+    if(still()) paintCached(el,c); tiles.set(el,{cam:c,hls:null,media:null}); io.observe(el);
   });
   colorRoute(lastSp&&lastSp.length?lastSp:sp); schedule();
 }
@@ -656,28 +678,46 @@ function stopPop(){const v=$('vid'); if(popHls){popHls.destroy();popHls=null} v.
 function closePlayer(){ stopPop(); $('player').classList.remove('show'); schedule(); }
 
 // ===== 실행 =====
-let loading=false, lastSp=[];
+let loading=false, lastSp=[], loadedOnce=false;
+if(cfg.maxPlay) MAX_PLAY=cfg.maxPlay;
 async function load(force){
   if(!cfg.key){ status('⚙︎ 설정에서 인증키를 먼저 입력하세요.',true); openSettings(); return; }
   if(loading) return; loading=true;
-  const errs=[]; dbg={};
+  const errs=[]; dbg={}; let painted=false;
   try{
-    status('CCTV 목록 받는 중…');
+    // 1) 처음 열 때: 저장해 둔 목록·속도·정지화면으로 즉시 그림 (서버를 기다리지 않음)
+    if(!loadedOnce && !force){
+      const sv=store.get('lastSp',null);
+      if(await loadCams(false,true)){
+        if(!routeGeo){ const g=store.get('routeGeo_v3',null); if(g&&g.length>50){ routeGeo=g; refineCams(); } }
+        lastSp=(sv&&Date.now()-sv.t<30*60*1000)?sv.sp:[];
+        render(lastSp); updateSpeeds(lastSp); painted=true;
+        status('저장된 화면 · 최신 정보 받는 중…');
+      }
+    }
+    // 2) 최신 CCTV 목록 (구성이 같으면 다시 그리지 않고 주소만 교체)
+    const before=cams.map(c=>c.name).join('|'), old=new Map(cams.map(c=>[c.name,c]));
+    status(painted?'저장된 화면 · CCTV 목록 확인 중…':'CCTV 목록 받는 중…');
     await loadCams(force).catch(e=>errs.push('CCTV: '+e.message));
     if(!routeGeo){ await getRouteGeo(); refineCams(); }
-    render([]);                       // CCTV 먼저 표시
+    if(painted && cams.map(c=>c.name).join('|')===before){
+      cams=cams.map(c=>{ const o=old.get(c.name); if(o){ o.url=c.url; return o; } return c; }); // 타일이 쓰는 객체 유지
+    } else render(lastSp);
+    // 3) 구간 속도
     status('구간 속도 받는 중…');
     let traffic=[];
     await loadTraffic(force).then(r=>traffic=r).catch(e=>errs.push('속도: '+e.message));
-    lastSp=segmentSpeeds(traffic); updateSpeeds(lastSp);
+    const sp=segmentSpeeds(traffic);
+    if(sp.some(x=>x.v>0)){ lastSp=sp; store.set('lastSp',{t:Date.now(),sp}); }
+    updateSpeeds(lastSp.length?lastSp:sp);
     if(!dbg.links){ if(dbg.trafficMsg) errs.push('속도: '+dbg.trafficMsg); else if(dbg.trafficErr) errs.push('속도: '+dbg.trafficErr); }
   }catch(e){ errs.push('앱 오류: '+(e&&e.message||e)); }
-  loading=false;
+  loading=false; loadedOnce=true;
   const now=new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
   errs.length?status(errs.join('\n'),true):status(`${now} 기준 · 속도 ${dbg.trafficOk||'저장된 정보'} · 동시 재생 ${MAX_PLAY}개`);
   $('dbg').textContent=JSON.stringify(dbg,null,1);
 }
-function openSettings(){ $('sKey').value=cfg.key; $('sType').value=cfg.type; $('sBuf').value=cfg.buf; $('sProxy').value=cfg.proxy; $('settings').classList.add('show'); }
+function openSettings(){ $('sPlay').value=String(MAX_PLAY); $('sKey').value=cfg.key; $('sType').value=cfg.type; $('sBuf').value=cfg.buf; $('sProxy').value=cfg.proxy; $('settings').classList.add('show'); }
 
 $('btnRefresh').onclick=()=>load(true);
 function modeIcon(){ $('btnMode').textContent=still()?'🖼':'🎥'; }
@@ -693,7 +733,7 @@ $('btnView').onclick=()=>{ cfg.view={map:'compact',compact:'list',list:'map'}[cf
 document.body.classList.toggle('compact',compact());
 $('btnSet').onclick=openSettings;
 $('sClose').onclick=()=>$('settings').classList.remove('show');
-$('sSave').onclick=()=>{ Object.assign(cfg,{key:$('sKey').value.trim(),type:$('sType').value,buf:$('sBuf').value,proxy:$('sProxy').value.trim()}); store.set('cfg',cfg); $('settings').classList.remove('show'); load(true); };
+$('sSave').onclick=()=>{ cfg.maxPlay=+$('sPlay').value; MAX_PLAY=cfg.maxPlay; Object.assign(cfg,{key:$('sKey').value.trim(),type:$('sType').value,buf:$('sBuf').value,proxy:$('sProxy').value.trim()}); store.set('cfg',cfg); $('settings').classList.remove('show'); load(true); };
 $('pClose').onclick=closePlayer;
 $('pFlip').onclick=()=>{ const c=cams[cur]; if(!c) return; toggleFlip(c.name); $('player').classList.toggle('flip',flips.has(c.name));
   tiles.forEach((t,el)=>{ if(t.cam.name===c.name) el.classList.toggle('flip',flips.has(c.name)); }); };
